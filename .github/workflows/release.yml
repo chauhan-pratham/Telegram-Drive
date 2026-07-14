@@ -18,6 +18,34 @@ jobs:
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Verify tag matches app version
+        shell: node {0}
+        env:
+          TAG_VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          const fs = require('fs');
+
+          const tagVersion = (process.env.TAG_VERSION || '').trim();
+          const packageJson = JSON.parse(fs.readFileSync('app/package.json', 'utf8'));
+          const tauriConfig = JSON.parse(fs.readFileSync('app/src-tauri/tauri.conf.json', 'utf8'));
+          const cargoToml = fs.readFileSync('app/src-tauri/Cargo.toml', 'utf8');
+          const cargoVersionMatch = cargoToml.match(/^version\s*=\s*"([^"]+)"/m);
+          const cargoVersion = cargoVersionMatch ? cargoVersionMatch[1] : '';
+
+          const mismatches = [
+            ['app/package.json', packageJson.version],
+            ['app/src-tauri/tauri.conf.json', tauriConfig.version],
+            ['app/src-tauri/Cargo.toml', cargoVersion],
+          ].filter(([, version]) => version !== tagVersion);
+
+          if (mismatches.length > 0) {
+            console.error(`Tag version v${tagVersion} does not match app version metadata:`);
+            for (const [file, version] of mismatches) {
+              console.error(`- ${file}: ${version || '(missing)'}`);
+            }
+            process.exit(1);
+          }
       
       - name: Extract changelog for this version
         id: changelog
