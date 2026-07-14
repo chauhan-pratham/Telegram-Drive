@@ -70,7 +70,7 @@ pub async fn cmd_test_proxy_traffic(
     log::info!("Testing proxy traffic through: {}", proxy_url);
 
     // Create a temporary session in a temp directory
-    let temp_dir = std::env::temp_dir().join("telegram_drive_proxy_test");
+    let temp_dir = std::env::temp_dir().join(format!("telegram_drive_proxy_test_{}_{}", std::process::id(), rand::random::<u32>()));
     let _ = std::fs::create_dir_all(&temp_dir);
     let session_path = temp_dir.join("test.session");
     let session_path_str = session_path.to_string_lossy().to_string();

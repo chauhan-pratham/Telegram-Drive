@@ -1305,6 +1305,17 @@ pub async fn cmd_clear_transcode_cache(
     quality: Option<String>,
     manager: tauri::State<'_, TranscodeManager>,
 ) -> Result<String, String> {
+    if let Some(ref fk) = file_key {
+        if fk.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+            return Err("Invalid file key".to_string());
+        }
+    }
+    if let Some(ref q) = quality {
+        if q.chars().any(|c| !c.is_alphanumeric() && c != 'p') {
+            return Err("Invalid quality".to_string());
+        }
+    }
+
     match (file_key, quality) {
         // Clear everything
         (None, None) => {
@@ -1436,6 +1447,10 @@ pub struct MasterVariant {
 }
 
 fn estimate_bandwidth(output_dir: &Path) -> Option<u32> {
+    if output_dir.components().any(|c| c == std::path::Component::ParentDir) {
+        log::error!("Transcode: Path traversal attempt blocked in estimate_bandwidth: {:?}", output_dir);
+        return None;
+    }
     let playlist = output_dir.join("index.m3u8");
     let content = std::fs::read_to_string(&playlist).ok()?;
 
@@ -1449,6 +1464,9 @@ fn estimate_bandwidth(output_dir: &Path) -> Option<u32> {
             let dur_str = line.trim_start_matches("#EXTINF:").split(',').next().unwrap_or("0");
             total_duration += dur_str.parse::<f64>().unwrap_or(0.0);
         } else if line.ends_with(".ts") {
+            if line.contains("..") || line.contains('/') || line.contains('\\') {
+                continue;
+            }
             let seg_path = output_dir.join(line);
             if let Ok(meta) = std::fs::metadata(&seg_path) {
                 total_bytes += meta.len();
@@ -1546,6 +1564,11 @@ async fn hls_master_playlist(
     token_data: web::Data<StreamTokenData>,
 ) -> impl Responder {
     let file_key = path.into_inner();
+
+    // Prevent path traversal
+    if file_key.chars().any(|c| !c.is_alphanumeric() && c != '_' && c != '-') {
+        return HttpResponse::BadRequest().body("Invalid file key");
+    }
 
     // Validate token
     match &query.token {

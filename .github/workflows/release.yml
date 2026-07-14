@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
       
       - name: Get version from tag
         id: get_version
@@ -31,7 +31,7 @@ jobs:
 
       - name: Create Release
         id: create-release
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffec1c37a5ca65 # v7.0.1
         env:
           RELEASE_BODY: ${{ steps.changelog.outputs.BODY }}
           RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
@@ -101,15 +101,15 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4.0.3
         with:
           node-version: 20
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8b449174092b3a1a6293910c228d73b064 # v1
         with:
           targets: ${{ matrix.target }}
 
@@ -138,16 +138,18 @@ jobs:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           const fs = require('fs');
-          const key = process.env.KEY.trim();
-          // Tauri expects TAURI_SIGNING_PRIVATE_KEY to be base64-encoded.
-          // If the secret is raw key text, base64-encode it; otherwise pass through.
-          const b64 = key.startsWith('untrusted comment:')
-            ? Buffer.from(key).toString('base64')
-            : key;
-          fs.appendFileSync(process.env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY=${b64}\n`);
+          const key = (process.env.KEY || '').trim();
+          if (key) {
+            const b64 = key.startsWith('untrusted comment:')
+              ? Buffer.from(key).toString('base64')
+              : key;
+            fs.appendFileSync(process.env.GITHUB_ENV, `TAURI_SIGNING_PRIVATE_KEY=${b64}\n`);
+          } else {
+            console.log('No Tauri signing key secret found; skipping signing configuration.');
+          }
 
       - name: Build the app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
@@ -306,7 +308,7 @@ jobs:
       contents: write
     steps:
       - name: Publish Release
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffec1c37a5ca65 # v7.0.1
         env:
           release_id: ${{ needs.create-release.outputs.release_id }}
         with:

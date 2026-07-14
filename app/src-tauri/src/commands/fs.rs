@@ -1692,7 +1692,7 @@ pub async fn cmd_zip_folder(
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "folder".to_string());
 
-    let zip_path = std::env::temp_dir().join(format!("{}.zip", folder_name));
+    let zip_path = std::env::temp_dir().join(format!("{}_{}_{}.zip", folder_name, std::process::id(), rand::random::<u32>()));
     let src_owned = src.clone();
     let out_path = zip_path.clone();
 
