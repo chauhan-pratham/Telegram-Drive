@@ -3,7 +3,7 @@
 
 /// Must match the `identifier` in tauri.conf.json
 #[cfg(target_os = "linux")]
-const BUNDLE_ID: &str = "com.cameronamer.telegramdrive";
+const BUNDLE_ID: &str = "com.chauhanpratham.telegramdrive";
 
 fn main() {
     // Fix EGL_BAD_ALLOC on Linux distros (especially Arch) where the AppImage's

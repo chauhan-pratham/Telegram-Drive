@@ -498,7 +498,7 @@ pub fn run() {
                                             let _ = crate::jni_cache::set_class_loader(class_loader_global);
                                         }
 
-                                        let class_name_jstr = match env.new_string("com.cameronamer.telegramdrive.MainActivity") {
+                                        let class_name_jstr = match env.new_string("com.chauhanpratham.telegramdrive.MainActivity") {
                                             Ok(s) => Some(s),
                                             Err(e) => {
                                                 log::error!("JNI: Failed to create MainActivity class name string: {}", e);
