@@ -22,8 +22,26 @@ jobs:
       - name: Extract changelog for this version
         id: changelog
         run: |
-          # Extract the first version block from CHANGELOG.md (between first and second ## headings)
-          BODY=$(awk '/^## \[/{if(found) exit; found=1; next} found' CHANGELOG.md)
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+
+          if [ -f CHANGELOG.md ]; then
+            # Prefer the notes for the tagged version; fall back to the first changelog block.
+            BODY=$(awk -v version="$VERSION" '
+              $0 ~ "^## \\[" version "\\]" { capture=1; matched=1; next }
+              /^## \[/ && capture { exit }
+              capture { print; next }
+              /^## \[/ && !matched && !fallback_seen { fallback_seen=1; next }
+              /^## \[/ && fallback_seen { exit }
+              fallback_seen { print }
+            ' CHANGELOG.md)
+          else
+            BODY="Release v$VERSION"
+          fi
+
+          if [ -z "$BODY" ]; then
+            BODY="Release v$VERSION"
+          fi
+
           # Escape for GitHub Actions output
           echo "BODY<<EOF" >> $GITHUB_OUTPUT
           echo "$BODY" >> $GITHUB_OUTPUT
