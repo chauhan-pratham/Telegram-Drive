@@ -127,7 +127,7 @@ jobs:
           node-version: 20
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@e97e2d8b449174092b3a1a6293910c228d73b064 # v1
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
