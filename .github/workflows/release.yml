@@ -31,7 +31,7 @@ jobs:
 
       - name: Create Release
         id: create-release
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffec1c37a5ca65 # v7.0.1
+        uses: actions/github-script@b7fb20027170725586618e88e28584897f5d475c # v7.0.1
         env:
           RELEASE_BODY: ${{ steps.changelog.outputs.BODY }}
           RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
@@ -308,7 +308,7 @@ jobs:
       contents: write
     steps:
       - name: Publish Release
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffec1c37a5ca65 # v7.0.1
+        uses: actions/github-script@b7fb20027170725586618e88e28584897f5d475c # v7.0.1
         env:
           release_id: ${{ needs.create-release.outputs.release_id }}
         with:
