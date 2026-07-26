@@ -81,7 +81,7 @@ rusqlite = "0.32"
 jni = "0.21"
 ndk-context = "0.1.1"
 openssl-sys = { version = "0.9", features = ["vendored"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["libsql"] }
 
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
