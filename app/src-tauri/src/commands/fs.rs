@@ -1480,7 +1480,7 @@ pub async fn cmd_download_file(
             let ctx = ndk_context::android_context();
             if let Ok(vm) = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) } {
                 if let Ok(mut env) = vm.attach_current_thread() {
-                    if let Some(main_class) = crate::jni_cache::get_main_activity_jclass() {
+                    if let Some(_main_class) = crate::jni_cache::get_main_activity_jclass() {
                         if let Ok(j_cache_path) = env.new_string(&actual_save_path) {
                             if let Ok(j_file_name) = env.new_string(file_name) {
                                 if let Ok(j_mime_type) = env.new_string(mime_type) {
