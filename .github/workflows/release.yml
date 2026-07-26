@@ -398,7 +398,7 @@ jobs:
           fi
           echo "Detected NDK Directory: $NDK_DIR"
 
-          SYSROOT_LIB=$(find "$NDK_DIR" -path "*/usr/lib/aarch64-linux-android/24*" -type d 2>/dev/null | head -n 1)
+          SYSROOT_LIB=$(find "$ANDROID_HOME" -name "libsqlite3.so" 2>/dev/null | grep "aarch64" | xargs -r dirname | head -n 1)
           if [ -z "$SYSROOT_LIB" ]; then
             SYSROOT_LIB=$(find "$NDK_DIR" -path "*/usr/lib/aarch64-linux-android*" -type d 2>/dev/null | head -n 1)
           fi
@@ -412,9 +412,7 @@ jobs:
           export AR_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
           
           if [ -n "$SYSROOT_LIB" ]; then
-            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $SYSROOT_LIB -C link-arg=-Wl,-z,muldefs"
-          else
-            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
+            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $SYSROOT_LIB"
           fi
 
           if [ ! -d "src-tauri/gen/android" ]; then

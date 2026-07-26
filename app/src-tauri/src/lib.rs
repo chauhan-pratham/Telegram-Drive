@@ -193,6 +193,7 @@ pub fn restart_api_server(_app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
+#[allow(unused_variables)]
 fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
