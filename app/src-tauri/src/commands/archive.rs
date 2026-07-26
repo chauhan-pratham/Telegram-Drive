@@ -283,6 +283,7 @@ async fn download_to_temp_file(
     Ok((archive_path, extract_dir))
 }
 
+#[cfg(not(target_os = "android"))]
 async fn list_rar_contents(
     client: &grammers_client::Client,
     media: &Media,
@@ -323,6 +324,17 @@ async fn list_rar_contents(
     Ok(entries)
 }
 
+#[cfg(target_os = "android")]
+async fn list_rar_contents(
+    _client: &grammers_client::Client,
+    _media: &Media,
+    _max_bytes: u64,
+    _filename: &str,
+) -> Result<Vec<ArchiveEntry>, String> {
+    Err("RAR viewing is supported on Desktop platforms".to_string())
+}
+
+#[cfg(not(target_os = "android"))]
 async fn extract_rar_entry(
     client: &grammers_client::Client,
     media: &Media,
@@ -405,6 +417,16 @@ async fn extract_rar_entry(
     let _ = tokio::fs::remove_dir_all(&extract_dir_cleanup).await;
 
     extraction_result
+}
+
+#[cfg(target_os = "android")]
+async fn extract_rar_entry(
+    _client: &grammers_client::Client,
+    _media: &Media,
+    _max_bytes: u64,
+    _entry_index: usize,
+) -> Result<ExtractedFile, String> {
+    Err("RAR viewing is supported on Desktop platforms".to_string())
 }
 
 // ── 7z helpers ──────────────────────────────────────────────────────────

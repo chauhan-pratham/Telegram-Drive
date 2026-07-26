@@ -6,6 +6,9 @@ on:
       - 'v*'  # Trigger on version tags like v1.0.0, v1.0.1
   workflow_dispatch: # Allows 1-click manual trigger from GitHub Actions Web UI
 
+permissions:
+  contents: write
+
 jobs:
   create-release:
     runs-on: ubuntu-latest
@@ -119,6 +122,8 @@ jobs:
 
   build-tauri:
     needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
