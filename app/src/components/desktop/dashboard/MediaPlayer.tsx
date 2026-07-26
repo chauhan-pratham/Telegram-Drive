@@ -152,7 +152,7 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
                 return;
             }
 
@@ -160,46 +160,60 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
 
             if (e.key === 'ArrowRight' || key === 'l') {
                 e.preventDefault();
+                e.stopPropagation();
                 onNext?.();
                 return;
             }
 
             if (e.key === 'ArrowLeft' || key === 'j') {
                 e.preventDefault();
+                e.stopPropagation();
                 onPrev?.();
                 return;
             }
 
             if (e.key === 'Escape') {
                 e.preventDefault();
+                e.stopPropagation();
                 onClose();
+                return;
             }
 
             if (key === 'f') {
                 e.preventDefault();
+                e.stopPropagation();
                 toggleFullscreen();
+                return;
             }
 
             if (key === 'm') {
                 e.preventDefault();
-                const video = mediaElementRef.current;
-                if (video) {
-                    video.muted = !video.muted;
+                e.stopPropagation();
+                const media = mediaElementRef.current;
+                if (media) {
+                    media.muted = !media.muted;
                 }
+                return;
             }
 
-            if (e.key === ' ') {
+            if (e.key === ' ' || e.code === 'Space') {
                 e.preventDefault();
+                e.stopPropagation();
                 if (e.repeat) return;
-                const video = mediaElementRef.current;
-                if (video) {
-                    video.paused ? video.play().catch(() => {}) : video.pause();
+                const media = mediaElementRef.current;
+                if (media) {
+                    if (media.paused) {
+                        media.play().catch(() => {});
+                    } else {
+                        media.pause();
+                    }
                 }
+                return;
             }
         };
 
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('keydown', handleKeyDown, { capture: true });
+        return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
     }, [onClose, onNext, onPrev, toggleFullscreen]);
 
     return (
@@ -324,7 +338,7 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
                             <div className="w-32 h-32 rounded-full bg-telegram-surface flex items-center justify-center mb-8 shadow-xl animate-pulse-slow">
                                 <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-telegram-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
                             </div>
-                            <audio src={streamUrl} controls autoPlay className="w-full max-w-md" />
+                            <audio ref={mediaElementRef as any} src={streamUrl} controls autoPlay className="w-full max-w-md" />
                         </div>
                     ) : (
                         <div className="text-white text-sm">Unsupported media type</div>

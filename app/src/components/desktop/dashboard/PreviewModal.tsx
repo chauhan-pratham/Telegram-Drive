@@ -69,18 +69,9 @@ interface PreviewModalProps {
     folders?: TelegramFolder[];
 }
 
-export function PreviewModal({
-    file,
-    onClose,
-    onNext,
-    onPrev,
-    currentIndex,
-    totalItems,
-    nextFile,
-    prevFile,
-    activeFolderId,
-    folders = [],
-}: PreviewModalProps) {
+export function PreviewModal(props: PreviewModalProps) {
+    const { file, activeFolderId, onClose, onNext, onPrev, currentIndex, totalItems, nextFile, prevFile, folders = [] } = props;
+
     const isMedia = isMediaFile(file.name, file.mime_type);
     const isPdf = isPdfFile(file.name, file.mime_type);
     const isArchive = isArchiveFile(file.name, file.mime_type);
@@ -130,11 +121,24 @@ export function PreviewModal({
         );
     }
 
+    return <ImagePreviewModal {...props} />;
+}
+
+function ImagePreviewModal({
+    file,
+    onClose,
+    onNext,
+    onPrev,
+    nextFile,
+    prevFile,
+    activeFolderId,
+}: PreviewModalProps) {
     const [src, setSrc] = useState<string | null>(null);
     const [openingNative, setOpeningNative] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const latestRequestRef = useRef(0);
+    const hasRetriedRef = useRef(false);
 
     const handleOpenNative = async () => {
         setOpeningNative(true);
@@ -149,6 +153,7 @@ export function PreviewModal({
     };
 
     useEffect(() => {
+        hasRetriedRef.current = false;
         const load = async () => {
             const key = getPreviewCacheKey(file.id, activeFolderId);
             const requestId = ++latestRequestRef.current;
@@ -344,6 +349,12 @@ export function PreviewModal({
                                 className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                                 alt="Preview"
                                 onError={async () => {
+                                    if (hasRetriedRef.current) {
+                                        setError('Failed to render image preview');
+                                        return;
+                                    }
+                                    hasRetriedRef.current = true;
+
                                     const key = getPreviewCacheKey(file.id, activeFolderId);
                                     forgetPreview(key);
                                     try {
@@ -353,9 +364,11 @@ export function PreviewModal({
                                         });
                                         if (fallbackPath) {
                                             const converted = fallbackPath.startsWith('data:') ? fallbackPath : convertFileSrc(fallbackPath);
-                                            setSrc(converted);
-                                            rememberPreview(key, converted);
-                                            return;
+                                            if (converted !== src) {
+                                                setSrc(converted);
+                                                rememberPreview(key, converted);
+                                                return;
+                                            }
                                         }
                                     } catch (e) {
                                         console.error("Fallback image preview failed:", e);
@@ -393,3 +406,4 @@ export function PreviewModal({
         </div>
     );
 }
+

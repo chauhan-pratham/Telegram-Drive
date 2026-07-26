@@ -471,7 +471,7 @@ pub async fn cmd_get_preview(
                             let is_img = fname_lower.ends_with(".jpg") || fname_lower.ends_with(".jpeg") || fname_lower.ends_with(".png") || fname_lower.ends_with(".webp") || fname_lower.ends_with(".gif") || fname_lower.ends_with(".bmp");
                             if is_img {
                                 if let Ok(meta) = std::fs::metadata(&path) {
-                                    if meta.len() <= 5 * 1024 * 1024 {
+                                    if meta.len() <= 30 * 1024 * 1024 {
                                         if let Ok(bytes) = std::fs::read(&path) {
                                             let b64 = general_purpose::STANDARD.encode(&bytes);
                                             let mime = if fname_lower.ends_with(".png") { "image/png" } else if fname_lower.ends_with(".webp") { "image/webp" } else if fname_lower.ends_with(".gif") { "image/gif" } else { "image/jpeg" };
@@ -608,7 +608,7 @@ pub async fn cmd_get_preview(
                 let save_path_str = save_path.to_string_lossy().to_string();
                 let lower_ext = ext.to_lowercase();
                 if ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].contains(&lower_ext.as_str()) {
-                    if meta.len() <= 5 * 1024 * 1024 {
+                    if meta.len() <= 30 * 1024 * 1024 {
                         if let Ok(bytes) = tokio::fs::read(&save_path).await {
                             let mime = match lower_ext.as_str() {
                                 "png" => "image/png",
@@ -776,7 +776,7 @@ pub async fn cmd_get_preview(
                 let lower_ext = ext.to_lowercase();
                 if ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].contains(&lower_ext.as_str()) {
                     if let Ok(meta) = tokio::fs::metadata(&save_path).await {
-                        if meta.len() <= 5 * 1024 * 1024 {
+                        if meta.len() <= 30 * 1024 * 1024 {
                             if let Ok(bytes) = tokio::fs::read(&save_path).await {
                                 let mime = match lower_ext.as_str() {
                                     "png" => "image/png",
