@@ -18,21 +18,20 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 
 ---
 
-## 📽️ Application Preview
-
-![Telegram Drive Demo](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/demo.gif)
-
----
-
 ## 📸 Screenshots
 
-| 🖥️ File Explorer & Starring | 🎬 Media Streaming & Player |
+| 🖥️ File Explorer | 🚀 Remote Upload |
 |:---:|:---:|
-| ![File Explorer](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/explorer.png) | ![Media Player](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/player.png) |
+| ![File Explorer](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/explorer.png) | ![Remote Upload](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/remote-upload.png) |
 
-| 📄 PDF Reader & Fast Scroll | 📊 Audit Feed & Details Panel |
-|:---:|:---:|
-| ![PDF Viewer](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/pdf-viewer.png) | ![Details Panel](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/details.png) |
+<br />
+
+<div align="center">
+
+### ⚙️ Settings & Configuration
+![Settings](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/settings.png)
+
+</div>
 
 ---
 
