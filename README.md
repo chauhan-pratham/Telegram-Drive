@@ -18,12 +18,6 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 
 ---
 
-## 📽️ Application Preview
-
-![Telegram Drive Demo](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/demo.gif)
-
----
-
 ## 📸 Screenshots
 
 | 🖥️ File Explorer & Starring | 🎬 Media Streaming & Player |
