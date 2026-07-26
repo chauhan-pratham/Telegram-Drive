@@ -71,7 +71,7 @@ unrar = "0.5"
 [target.'cfg(target_os = "windows")'.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_os = "android")))'.dependencies]
 rusqlite = "0.32"
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -81,7 +81,7 @@ rusqlite = "0.32"
 jni = "0.21"
 ndk-context = "0.1.1"
 openssl-sys = { version = "0.9", features = ["vendored"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = "0.32"
 
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
