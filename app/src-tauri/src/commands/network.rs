@@ -85,6 +85,7 @@ pub async fn cmd_test_proxy_traffic(
         rt.block_on(async {
             // Open a fresh in-memory-ish SQLite session
             let session = grammers_session::storages::SqliteSession::open(&session_path_str)
+                .await
                 .map_err(|e| format!("Failed to open test session: {}", e))?;
             let session = std::sync::Arc::new(session);
 
@@ -104,7 +105,7 @@ pub async fn cmd_test_proxy_traffic(
                 conn_params,
             );
 
-            let client = grammers_client::Client::new(&pool);
+            let client = grammers_client::Client::new(pool.handle.clone());
 
             // Spawn the runner briefly
             let grammers_mtsender::SenderPool { runner, .. } = pool;

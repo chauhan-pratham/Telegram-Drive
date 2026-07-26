@@ -11,8 +11,10 @@ use crate::commands::preview::THUMBNAIL_EXTS;
 use crate::models::FolderMetadata;
 use crate::bandwidth::BandwidthManager;
 use crate::vpn_optimizer::NetworkConfig;
-use grammers_client::types::{Media, Peer};
-use grammers_client::InputMessage;
+use grammers_client::media::Media;
+use grammers_client::peer::Peer;
+use grammers_session::types::PeerRef;
+use grammers_client::message::InputMessage;
 use grammers_tl_types as tl;
 use serde::Serialize;
 use std::sync::Arc;
@@ -91,26 +93,8 @@ impl Drop for CleanupStream {
     }
 }
 
-fn peer_to_input_peer(peer: &Peer) -> Result<tl::enums::InputPeer, String> {
-    match peer {
-        Peer::User(u) => {
-            let (id, access_hash) = match &u.raw {
-                tl::enums::User::User(usr) => (usr.id, usr.access_hash.unwrap_or(0)),
-                tl::enums::User::Empty(usr) => (usr.id, 0),
-            };
-            Ok(tl::enums::InputPeer::User(tl::types::InputPeerUser {
-                user_id: id,
-                access_hash,
-            }))
-        }
-        Peer::Channel(c) => {
-            Ok(tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
-                channel_id: c.raw.id,
-                access_hash: c.raw.access_hash.ok_or("No access hash for channel")?,
-            }))
-        }
-        _ => Err("Unsupported peer type".to_string()),
-    }
+fn peer_to_input_peer(peer: &PeerRef) -> Result<tl::enums::InputPeer, String> {
+    Ok(tl::enums::InputPeer::from(*peer))
 }
 
 /// Spawn a blocking task to delete stale thumbnail and preview cache entries
@@ -257,10 +241,12 @@ async fn api_list_files(
         }
         let mut dialogs = client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await.ok().flatten() {
-            if let Peer::Channel(ref c) = dialog.peer {
+            if let grammers_client::peer::Peer::Channel(ref c) = dialog.peer {
                 let name = c.raw.title.clone();
                 if name.to_lowercase().contains("[td]") {
-                    peers_to_scan.push((Some(c.raw.id), dialog.peer.clone()));
+                    if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                        peers_to_scan.push((Some(c.raw.id), peer_ref));
+                    }
                 }
             }
         }
@@ -291,7 +277,7 @@ async fn api_list_files(
 
     let mut all_files: Vec<ApiFile> = Vec::new();
     for (fid, peer) in &peers_to_scan {
-        let mut msgs = client.iter_messages(peer);
+        let mut msgs = client.iter_messages(*peer);
         if let Some(offset_id) = query.offset_id {
             msgs = msgs.offset_id(offset_id);
         }
@@ -315,13 +301,22 @@ async fn api_list_files(
             if let Some(doc) = msg.media() {
                 let (name, size, mime) = match doc {
                     Media::Document(d) => {
-                        let doc_name = d.name().to_string();
+                        let doc_name = d.name().unwrap_or("").to_string();
                         // Prefer the message caption (set by rename via EditMessage)
                         let caption = msg.text();
                         let display_name = if caption.is_empty() { doc_name } else { caption.to_string() };
-                        (display_name, d.size(), d.mime_type().map(|s| s.to_string()))
+                        (display_name, d.size().unwrap_or(0) as u64, d.mime_type().map(|s| s.to_string()))
                     }
-                    Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".into())),
+                    Media::Photo(p) => {
+                        let photo_size = p.thumbs()
+                            .iter()
+                            .filter(|t| t.size() > 0)
+                            .max_by_key(|t| t.size())
+                            .map(|t| t.size() as u64)
+                            .unwrap_or(0);
+                        let display_name = format!("photo_{}.jpg", msg.id());
+                        (display_name, photo_size, Some("image/jpeg".into()))
+                    }
                     _ => ("Unknown".to_string(), 0, None),
                 };
 
@@ -329,7 +324,7 @@ async fn api_list_files(
                     id: msg.id() as i64,
                     folder_id: *fid,
                     name,
-                    size: size as u64,
+                    size,
                     mime_type: mime,
                     created_at: msg.date().to_string(),
                 });
@@ -498,19 +493,28 @@ async fn api_get_file(
                 if let Some(doc) = msg.media() {
                     let (name, size, mime) = match doc {
                         Media::Document(d) => {
-                            let doc_name = d.name().to_string();
+                            let doc_name = d.name().unwrap_or("").to_string();
                             let caption = msg.text();
                             let display_name = if caption.is_empty() { doc_name } else { caption.to_string() };
-                            (display_name, d.size(), d.mime_type().map(|s| s.to_string()))
+                            (display_name, d.size().unwrap_or(0) as u64, d.mime_type().map(|s| s.to_string()))
                         }
-                        Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".into())),
+                        Media::Photo(p) => {
+                            let photo_size = p.thumbs()
+                                .iter()
+                                .filter(|t| t.size() > 0)
+                                .max_by_key(|t| t.size())
+                                .map(|t| t.size() as u64)
+                                .unwrap_or(0);
+                            let display_name = format!("photo_{}.jpg", msg.id());
+                            (display_name, photo_size, Some("image/jpeg".into()))
+                        }
                         _ => ("Unknown".to_string(), 0, None),
                     };
                     return HttpResponse::Ok().json(ApiFile {
                         id: msg.id() as i64,
                         folder_id: query.folder_id,
                         name,
-                        size: size as u64,
+                        size,
                         mime_type: mime,
                         created_at: msg.date().to_string(),
                     });
@@ -555,8 +559,8 @@ async fn api_download_file(
                         _ => "application/octet-stream".to_string(),
                     };
                     let filename = match &media {
-                        Media::Document(d) => d.name().to_string(),
-                        Media::Photo(_) => "Photo.jpg".to_string(),
+                        Media::Document(d) => d.name().unwrap_or("download").to_string(),
+                        Media::Photo(_) => format!("photo_{}.jpg", msg.id()),
                         _ => "download".to_string(),
                     };
 
@@ -649,11 +653,10 @@ async fn api_bulk_files(
                 Ok(p) => p,
                 Err(e) => return json_error("PEER_ERROR", &e, 400),
             };
-            if let Err(e) = client.delete_messages(&peer, &ids).await {
+            if let Err(e) = client.delete_messages(peer, &ids).await {
                 return json_error("DELETE_FAILED", &e.to_string(), 500);
             }
 
-            // Clean up stale thumbnail and preview caches for deleted messages.
             let source_folder_key = source_folder
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "home".to_string());
@@ -674,16 +677,13 @@ async fn api_bulk_files(
                 Err(e) => return json_error("PEER_ERROR", &e, 400),
             };
             if source_folder != target_folder {
-                if let Err(e) = client.forward_messages(&target_peer, &ids, &source_peer).await {
+                if let Err(e) = client.forward_messages(target_peer, &ids, source_peer).await {
                     return json_error("MOVE_FORWARD_FAILED", &format!("Forward failed: {}", e), 500);
                 }
-                if let Err(e) = client.delete_messages(&source_peer, &ids).await {
+                if let Err(e) = client.delete_messages(source_peer, &ids).await {
                     return json_error("MOVE_DELETE_FAILED", &format!("Delete original failed: {}", e), 500);
                 }
 
-                // Clean up stale thumbnail and preview caches for the old message IDs.
-                // After a move (forward+delete), messages get new IDs in the target folder,
-                // so any cached thumbnails/previews under the old IDs are orphaned.
                 let source_folder_key = source_folder
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "home".to_string());
@@ -701,20 +701,19 @@ async fn api_bulk_files(
                 Err(e) => return json_error("PEER_ERROR", &e, 400),
             };
 
-            // Download all files in async context, then delegate zip I/O
-            // to spawn_blocking so we never block an Actix worker thread.
-            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();                        let mut total_bytes: u64 = 0;
-                        let max_bytes = net_config.archive_max_bytes();
+            let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+            let mut total_bytes: u64 = 0;
+            let max_bytes = net_config.archive_max_bytes();
 
-                        for mid in &ids {
-                let messages = match client.get_messages_by_id(&peer, &[*mid]).await {
+            for mid in &ids {
+                let messages = match client.get_messages_by_id(peer, &[*mid]).await {
                     Ok(m) => m,
                     Err(_) => continue,
                 };
                 if let Some(m) = messages.into_iter().flatten().next() {
                     if let Some(media) = m.media() {
                         let filename = match &media {
-                            Media::Document(d) => d.name().to_string(),
+                            Media::Document(d) => d.name().unwrap_or("").to_string(),
                             Media::Photo(_) => format!("photo_{}.jpg", mid),
                             _ => format!("file_{}.bin", mid),
                         };
@@ -743,7 +742,6 @@ async fn api_bulk_files(
             let temp_zip_path = std::env::temp_dir().join(format!("archive_{}_{}.zip", rand::random::<u32>(), rand::random::<u32>()));
             let zip_path_for_task = temp_zip_path.clone();
 
-            // All zip I/O runs on a blocking thread — never touches Actix workers.
             let archive_result = tokio::task::spawn_blocking(move || -> Result<(), String> {
                 let write_zip = || -> Result<(), String> {
                     let zip_file = std::fs::File::create(&zip_path_for_task)
@@ -847,10 +845,12 @@ async fn api_search_files(
         }
         let mut dialogs = client.iter_dialogs();
         while let Some(dialog) = dialogs.next().await.ok().flatten() {
-            if let Peer::Channel(ref c) = dialog.peer {
+            if let grammers_client::peer::Peer::Channel(ref c) = dialog.peer {
                 let name = c.raw.title.clone();
                 if name.to_lowercase().contains("[td]") {
-                    peers_to_scan.push((Some(c.raw.id), dialog.peer.clone()));
+                    if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                        peers_to_scan.push((Some(c.raw.id), peer_ref));
+                    }
                 }
             }
         }
@@ -880,17 +880,26 @@ async fn api_search_files(
 
     let mut matching_files = Vec::new();
     for (fid, peer) in &peers_to_scan {
-        let mut msgs = client.iter_messages(peer).limit(200);
+        let mut msgs = client.iter_messages(*peer).limit(200);
         while let Some(msg) = msgs.next().await.ok().flatten() {
             if let Some(doc) = msg.media() {
                 let (name, size, mime) = match doc {
                     Media::Document(d) => {
-                        let doc_name = d.name().to_string();
+                        let doc_name = d.name().unwrap_or("").to_string();
                         let caption = msg.text();
                         let display_name = if caption.is_empty() { doc_name } else { caption.to_string() };
-                        (display_name, d.size(), d.mime_type().map(|s| s.to_string()))
+                        (display_name, d.size().unwrap_or(0) as u64, d.mime_type().map(|s| s.to_string()))
                     }
-                    Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".into())),
+                    Media::Photo(p) => {
+                        let photo_size = p.thumbs()
+                            .iter()
+                            .filter(|t| t.size() > 0)
+                            .max_by_key(|t| t.size())
+                            .map(|t| t.size() as u64)
+                            .unwrap_or(0);
+                        let display_name = format!("photo_{}.jpg", msg.id());
+                        (display_name, photo_size, Some("image/jpeg".into()))
+                    }
                     _ => ("Unknown".to_string(), 0, None),
                 };
                 
@@ -899,7 +908,7 @@ async fn api_search_files(
                         id: msg.id() as i64,
                         folder_id: *fid,
                         name,
-                        size: size as u64,
+                        size,
                         mime_type: mime,
                         created_at: msg.date().to_string(),
                     });
@@ -910,8 +919,6 @@ async fn api_search_files(
 
     HttpResponse::Ok().json(matching_files)
 }
-
-
 
 #[delete("/api/v1/files/{message_id}")]
 async fn api_delete_file(
@@ -938,7 +945,7 @@ async fn api_delete_file(
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
 
-    match client.delete_messages(&peer, &[message_id]).await {
+    match client.delete_messages(peer, &[message_id]).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "success": true })),
         Err(e) => json_error("DELETE_FAILED", &e.to_string(), 500),
     }
@@ -980,7 +987,7 @@ async fn api_copy_file(
         Err(e) => return json_error("TARGET_PEER_ERROR", &e, 400),
     };
 
-    match client.forward_messages(&target_peer, &[message_id], &source_peer).await {
+    match client.forward_messages(target_peer, &[message_id], source_peer).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({ "success": true })),
         Err(e) => json_error("COPY_FAILED", &e.to_string(), 500),
     }
@@ -1013,18 +1020,13 @@ async fn api_update_file(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    // Rename first — edits the original message's caption so the
-    // updated name is carried over if a move (forward) follows.
     if let Some(ref new_name) = body.name {
         let rename_peer = match resolve_peer(&client, body.source_folder_id, &tg_state.peer_cache).await {
             Ok(p) => p,
             Err(e) => return json_error("PEER_ERROR", &e, 400),
         };
 
-        // Verify the message exists before attempting to edit it.
-        // This avoids a cryptic MESSAGE_ID_INVALID RPC error when the message
-        // was moved or deleted since the file list was loaded.
-        let messages = match client.get_messages_by_id(&rename_peer, &[message_id]).await {
+        let messages = match client.get_messages_by_id(rename_peer, &[message_id]).await {
             Ok(msgs) => msgs,
             Err(e) => return json_error("FETCH_ERROR", &format!("Failed to fetch message for rename: {}", e), 500),
         };
@@ -1056,6 +1058,7 @@ async fn api_update_file(
             schedule_date: None,
             quick_reply_shortcut_id: None,
             schedule_repeat_period: None,
+            rich_message: None,
         }).await {
             return json_error("RENAME_FAILED", &e.to_string(), 500);
         }
@@ -1073,14 +1076,13 @@ async fn api_update_file(
                 Err(e) => return json_error("TARGET_PEER_ERROR", &e, 400),
             };
 
-            if let Err(e) = client.forward_messages(&target_peer, &[message_id], &source_peer).await {
+            if let Err(e) = client.forward_messages(target_peer, &[message_id], source_peer).await {
                 return json_error("MOVE_FORWARD_FAILED", &e.to_string(), 500);
             }
-            if let Err(e) = client.delete_messages(&source_peer, &[message_id]).await {
+            if let Err(e) = client.delete_messages(source_peer, &[message_id]).await {
                 return json_error("MOVE_DELETE_FAILED", &e.to_string(), 500);
             }
 
-            // Clean up stale thumbnail and preview caches for the old message ID
             let source_folder_key = source_folder_id
                 .map(|id| id.to_string())
                 .unwrap_or_else(|| "home".to_string());
@@ -1225,7 +1227,7 @@ async fn api_upload_file(
     let mut sent_msg = None;
 
     for attempt in 0..=max_retries {
-        match client.send_message(&peer, message.clone()).await {
+        match client.send_message(peer, message.clone()).await {
             Ok(msg) => {
                 sent_msg = Some(msg);
                 break;
@@ -1253,26 +1255,49 @@ async fn api_upload_file(
         }
     }
 
+    bw_manager.release_up(file_size);
     let _ = tokio::fs::remove_file(&temp_path).await;
 
     let msg = match sent_msg {
         Some(m) => m,
-        None => {
-            bw_manager.release_up(file_size);
-            return json_error("SEND_MESSAGE_FAILED", &last_err, 500);
+        None => return json_error("SEND_FAILED", &last_err, 500),
+    };
+
+    let mime_type = field_mime.unwrap_or_else(|| {
+        if let Some(ext) = std::path::Path::new(&filename).extension().and_then(|s| s.to_str()) {
+            match ext.to_lowercase().as_str() {
+                "jpg" | "jpeg" => "image/jpeg",
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "svg" => "image/svg+xml",
+                "mp4" => "video/mp4",
+                "mkv" => "video/x-matroska",
+                "webm" => "video/webm",
+                "mp3" => "audio/mpeg",
+                "wav" => "audio/wav",
+                "pdf" => "application/pdf",
+                "zip" => "application/zip",
+                "txt" => "text/plain",
+                "json" => "application/json",
+                _ => "application/octet-stream",
+            }
+            .to_string()
+        } else {
+            "application/octet-stream".to_string()
         }
-    };
+    });
 
-    let response_file = ApiFile {
-        id: msg.id() as i64,
-        folder_id,
-        name: filename,
-        size: file_size,
-        mime_type: field_mime,
-        created_at: msg.date().to_string(),
-    };
-
-    HttpResponse::Ok().json(response_file)
+    HttpResponse::Ok().json(serde_json::json!({
+        "data": {
+            "id": msg.id(),
+            "folder_id": folder_id,
+            "name": filename,
+            "size": file_size,
+            "mime_type": mime_type,
+            "created_at": chrono::Utc::now().to_rfc3339()
+        }
+    }))
 }
 
 #[get("/api/v1/folders")]
@@ -1298,7 +1323,9 @@ async fn api_list_folders(
     while let Some(dialog) = dialogs.next().await.ok().flatten() {
         if let Peer::Channel(ref c) = dialog.peer {
             let id = c.raw.id;
-            discovered.insert(id, dialog.peer.clone());
+            if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                discovered.insert(id, peer_ref);
+            }
             let name = c.raw.title.clone();
             if name.to_lowercase().contains("[td]") {
                 let display_name = name.replace(" [TD]", "").replace(" [td]", "").replace("[TD]", "").replace("[td]", "").trim().to_string();
@@ -1310,8 +1337,10 @@ async fn api_list_folders(
                     parent_id: None,
                     username,
                     is_public,
+                    is_owned: c.raw.creator,
                     group_id: None,
                     display_order: 0,
+                    participants_count: None,
                 });
             }
         }
@@ -1456,7 +1485,9 @@ async fn api_storage_stats(
             let name = c.raw.title.clone();
             if name.to_lowercase().contains("[td]") {
                 let display_name = name.replace(" [TD]", "").replace(" [td]", "").replace("[TD]", "").replace("[td]", "").trim().to_string();
-                peers_to_scan.push((Some(c.raw.id), display_name, dialog.peer.clone()));
+                if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                    peers_to_scan.push((Some(c.raw.id), display_name, peer_ref));
+                }
             }
         }
     }
@@ -1473,7 +1504,7 @@ async fn api_storage_stats(
         while let Some(msg) = msgs.next().await.ok().flatten() {
             if let Some(doc) = msg.media() {
                 let (size, mime) = match doc {
-                    Media::Document(d) => (d.size() as u64, d.mime_type().unwrap_or("application/octet-stream").to_string()),
+                    Media::Document(d) => (d.size().unwrap_or(0) as u64, d.mime_type().unwrap_or("application/octet-stream").to_string()),
                     Media::Photo(_) => (0, "image/jpeg".to_string()),
                     _ => continue,
                 };
@@ -1543,7 +1574,9 @@ async fn api_storage_duplicates(
         if let Peer::Channel(ref c) = dialog.peer {
             let name = c.raw.title.clone();
             if name.to_lowercase().contains("[td]") {
-                peers_to_scan.push((Some(c.raw.id), dialog.peer.clone()));
+                if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                    peers_to_scan.push((Some(c.raw.id), peer_ref));
+                }
             }
         }
     }
@@ -1555,8 +1588,17 @@ async fn api_storage_duplicates(
         while let Some(msg) = msgs.next().await.ok().flatten() {
             if let Some(doc) = msg.media() {
                 let (name, size, mime) = match doc {
-                    Media::Document(d) => (d.name().to_string(), d.size() as u64, d.mime_type().map(|s| s.to_string())),
-                    Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".into())),
+                    Media::Document(d) => (d.name().unwrap_or("").to_string(), d.size().unwrap_or(0) as u64, d.mime_type().map(|s| s.to_string())),
+                    Media::Photo(p) => {
+                        let photo_size = p.thumbs()
+                            .iter()
+                            .filter(|t| t.size() > 0)
+                            .max_by_key(|t| t.size())
+                            .map(|t| t.size() as usize)
+                            .unwrap_or(0);
+                        let display_name = format!("photo_{}.jpg", msg.id());
+                        (display_name, photo_size as u64, Some("image/jpeg".into()))
+                    }
                     _ => continue,
                 };
 
@@ -1604,7 +1646,9 @@ async fn api_empty_folders(
             let name = c.raw.title.clone();
             if name.to_lowercase().contains("[td]") {
                 let display_name = name.replace(" [TD]", "").replace(" [td]", "").replace("[TD]", "").replace("[td]", "").trim().to_string();
-                folders_to_check.push((c.raw.id, display_name, dialog.peer.clone()));
+                if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                    folders_to_check.push((c.raw.id, display_name, peer_ref));
+                }
             }
         }
     }
@@ -1626,8 +1670,10 @@ async fn api_empty_folders(
                 parent_id: None,
                 username: None,
                 is_public: false,
+                is_owned: true,
                 group_id: None,
                 display_order: 0,
+                participants_count: None,
             });
         }
     }
@@ -1660,7 +1706,7 @@ async fn api_get_file_thumbnail(
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
 
-    let messages = match client.get_messages_by_id(&peer, &[message_id]).await {
+    let messages = match client.get_messages_by_id(peer, &[message_id]).await {
         Ok(msgs) => msgs,
         Err(e) => return json_error("GET_MESSAGE_ERROR", &e.to_string(), 500),
     };
@@ -1753,7 +1799,7 @@ async fn api_media_info(
         Err(e) => return json_error("PEER_ERROR", &e, 400),
     };
 
-    let messages = match client.get_messages_by_id(&peer, &[message_id]).await {
+    let messages = match client.get_messages_by_id(peer, &[message_id]).await {
         Ok(msgs) => msgs,
         Err(e) => return json_error("GET_MESSAGE_ERROR", &e.to_string(), 500),
     };

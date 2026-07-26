@@ -18,7 +18,7 @@ interface ActionPopoverProps {
  * A bottom-sheet-style action popover for mobile, replacing swipe-to-reveal.
  * Tapping a file's ⋮ button opens this popover with contextual actions.
  */
-export function ActionPopover({ actions, onClose, title }: ActionPopoverProps) {
+export function ActionPopover({ actions = [], onClose, title }: ActionPopoverProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {

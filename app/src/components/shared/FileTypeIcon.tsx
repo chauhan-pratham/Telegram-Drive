@@ -3,74 +3,94 @@ import {
     FileArchive, FileCode, FileSpreadsheet, Presentation,
     FileType
 } from 'lucide-react';
+import { useMemo } from 'react';
 
-const extensionMap: Record<string, { icon: typeof File; color: string }> = {
-    // Images
-    jpg: { icon: FileImage, color: 'text-pink-400' },
-    jpeg: { icon: FileImage, color: 'text-pink-400' },
-    png: { icon: FileImage, color: 'text-pink-400' },
-    gif: { icon: FileImage, color: 'text-pink-400' },
-    webp: { icon: FileImage, color: 'text-pink-400' },
-    svg: { icon: FileImage, color: 'text-pink-400' },
-    bmp: { icon: FileImage, color: 'text-pink-400' },
-    heic: { icon: FileImage, color: 'text-pink-400' },
+interface FileTypeConfig {
+    icon: typeof File;
+    gradient: { start: string; end: string };
+    label: string;
+}
 
-    // Videos
-    mp4: { icon: FileVideo, color: 'text-purple-400' },
-    mov: { icon: FileVideo, color: 'text-purple-400' },
-    avi: { icon: FileVideo, color: 'text-purple-400' },
-    mkv: { icon: FileVideo, color: 'text-purple-400' },
-    webm: { icon: FileVideo, color: 'text-purple-400' },
-
-    // Audio
-    mp3: { icon: FileAudio, color: 'text-green-400' },
-    wav: { icon: FileAudio, color: 'text-green-400' },
-    flac: { icon: FileAudio, color: 'text-green-400' },
-    aac: { icon: FileAudio, color: 'text-green-400' },
-    ogg: { icon: FileAudio, color: 'text-green-400' },
-
-    // Documents
-    pdf: { icon: FileType, color: 'text-red-400' },
-    doc: { icon: FileText, color: 'text-blue-400' },
-    docx: { icon: FileText, color: 'text-blue-400' },
-    txt: { icon: FileText, color: 'text-gray-400' },
-    rtf: { icon: FileText, color: 'text-gray-400' },
-    md: { icon: FileText, color: 'text-gray-400' },
-
-    // Spreadsheets
-    xls: { icon: FileSpreadsheet, color: 'text-green-500' },
-    xlsx: { icon: FileSpreadsheet, color: 'text-green-500' },
-    csv: { icon: FileSpreadsheet, color: 'text-green-500' },
-
-    // Presentations
-    ppt: { icon: Presentation, color: 'text-orange-400' },
-    pptx: { icon: Presentation, color: 'text-orange-400' },
-    key: { icon: Presentation, color: 'text-orange-400' },
-
-    // Archives
-    zip: { icon: FileArchive, color: 'text-yellow-400' },
-    rar: { icon: FileArchive, color: 'text-yellow-400' },
-    '7z': { icon: FileArchive, color: 'text-yellow-400' },
-    tar: { icon: FileArchive, color: 'text-yellow-400' },
-    gz: { icon: FileArchive, color: 'text-yellow-400' },
-
-    // Code
-    js: { icon: FileCode, color: 'text-yellow-300' },
-    ts: { icon: FileCode, color: 'text-blue-300' },
-    jsx: { icon: FileCode, color: 'text-cyan-300' },
-    tsx: { icon: FileCode, color: 'text-cyan-300' },
-    py: { icon: FileCode, color: 'text-green-300' },
-    rs: { icon: FileCode, color: 'text-orange-300' },
-    go: { icon: FileCode, color: 'text-cyan-400' },
-    java: { icon: FileCode, color: 'text-red-300' },
-    html: { icon: FileCode, color: 'text-orange-400' },
-    css: { icon: FileCode, color: 'text-blue-400' },
-    json: { icon: FileCode, color: 'text-yellow-200' },
+const gradients = {
+    pdf: { start: '#EF5350', end: '#C62828' },
+    image: { start: '#EC407A', end: '#D81B60' },
+    video: { start: '#AB47BC', end: '#6A1B9A' },
+    audio: { start: '#26A69A', end: '#00695C' },
+    spreadsheet: { start: '#66BB6A', end: '#2E7D32' },
+    presentation: { start: '#FFA726', end: '#EF6C00' },
+    archive: { start: '#FFCA28', end: '#FF8F00' },
+    code: { start: '#42A5F5', end: '#1565C0' },
+    text: { start: '#90A4AE', end: '#455A64' },
 };
 
-export function getFileTypeInfo(filename: string): { icon: typeof File; color: string } {
-    const ext = filename.split('.').pop()?.toLowerCase() || '';
-    return extensionMap[ext] || { icon: File, color: 'text-telegram-subtext' };
+const extensionMap: Record<string, FileTypeConfig> = {
+    // Images
+    jpg: { icon: FileImage, gradient: gradients.image, label: 'JPG' },
+    jpeg: { icon: FileImage, gradient: gradients.image, label: 'JPEG' },
+    png: { icon: FileImage, gradient: gradients.image, label: 'PNG' },
+    gif: { icon: FileImage, gradient: gradients.image, label: 'GIF' },
+    webp: { icon: FileImage, gradient: gradients.image, label: 'WEBP' },
+    svg: { icon: FileImage, gradient: gradients.image, label: 'SVG' },
+    bmp: { icon: FileImage, gradient: gradients.image, label: 'BMP' },
+    heic: { icon: FileImage, gradient: gradients.image, label: 'HEIC' },
+
+    // Videos
+    mp4: { icon: FileVideo, gradient: gradients.video, label: 'MP4' },
+    mov: { icon: FileVideo, gradient: gradients.video, label: 'MOV' },
+    avi: { icon: FileVideo, gradient: gradients.video, label: 'AVI' },
+    mkv: { icon: FileVideo, gradient: gradients.video, label: 'MKV' },
+    webm: { icon: FileVideo, gradient: gradients.video, label: 'WEBM' },
+
+    // Audio
+    mp3: { icon: FileAudio, gradient: gradients.audio, label: 'MP3' },
+    wav: { icon: FileAudio, gradient: gradients.audio, label: 'WAV' },
+    flac: { icon: FileAudio, gradient: gradients.audio, label: 'FLAC' },
+    aac: { icon: FileAudio, gradient: gradients.audio, label: 'AAC' },
+    ogg: { icon: FileAudio, gradient: gradients.audio, label: 'OGG' },
+
+    // Documents
+    pdf: { icon: FileType, gradient: gradients.pdf, label: 'PDF' },
+    doc: { icon: FileText, gradient: gradients.code, label: 'DOC' },
+    docx: { icon: FileText, gradient: gradients.code, label: 'DOCX' },
+    txt: { icon: FileText, gradient: gradients.text, label: 'TXT' },
+    rtf: { icon: FileText, gradient: gradients.text, label: 'RTF' },
+    md: { icon: FileText, gradient: gradients.text, label: 'MD' },
+
+    // Spreadsheets
+    xls: { icon: FileSpreadsheet, gradient: gradients.spreadsheet, label: 'XLS' },
+    xlsx: { icon: FileSpreadsheet, gradient: gradients.spreadsheet, label: 'XLSX' },
+    csv: { icon: FileSpreadsheet, gradient: gradients.spreadsheet, label: 'CSV' },
+
+    // Presentations
+    ppt: { icon: Presentation, gradient: gradients.presentation, label: 'PPT' },
+    pptx: { icon: Presentation, gradient: gradients.presentation, label: 'PPTX' },
+    key: { icon: Presentation, gradient: gradients.presentation, label: 'KEY' },
+
+    // Archives
+    zip: { icon: FileArchive, gradient: gradients.archive, label: 'ZIP' },
+    rar: { icon: FileArchive, gradient: gradients.archive, label: 'RAR' },
+    '7z': { icon: FileArchive, gradient: gradients.archive, label: '7Z' },
+    tar: { icon: FileArchive, gradient: gradients.archive, label: 'TAR' },
+    gz: { icon: FileArchive, gradient: gradients.archive, label: 'GZ' },
+
+    // Code
+    js: { icon: FileCode, gradient: gradients.code, label: 'JS' },
+    ts: { icon: FileCode, gradient: gradients.code, label: 'TS' },
+    jsx: { icon: FileCode, gradient: gradients.code, label: 'JSX' },
+    tsx: { icon: FileCode, gradient: gradients.code, label: 'TSX' },
+    py: { icon: FileCode, gradient: gradients.code, label: 'PY' },
+    rs: { icon: FileCode, gradient: gradients.code, label: 'RS' },
+    go: { icon: FileCode, gradient: gradients.code, label: 'GO' },
+    java: { icon: FileCode, gradient: gradients.code, label: 'JAVA' },
+    html: { icon: FileCode, gradient: gradients.code, label: 'HTML' },
+    css: { icon: FileCode, gradient: gradients.code, label: 'CSS' },
+    json: { icon: FileCode, gradient: gradients.code, label: 'JSON' },
+};
+
+export function getFileTypeInfo(filename?: string): FileTypeConfig {
+    const safeName = filename || '';
+    const ext = safeName.split('.').pop()?.toLowerCase() || '';
+    return extensionMap[ext] || { icon: File, gradient: gradients.text, label: ext.toUpperCase().slice(0, 4) };
 }
 
 interface FileTypeIconProps {
@@ -86,7 +106,61 @@ const sizeMap = {
 };
 
 export function FileTypeIcon({ filename, className, size = 'md' }: FileTypeIconProps) {
-    const { icon: Icon, color } = getFileTypeInfo(filename);
+    const { icon: Icon, gradient, label } = getFileTypeInfo(filename);
     const sizeClass = className ?? sizeMap[size];
-    return <Icon className={`${sizeClass} ${color} pointer-events-none select-none`} />;
+
+    // Generate a unique ID suffix to avoid duplicate linearGradient definitions in SVG DOM
+    const gradIdSuffix = useMemo(() => Math.random().toString(36).substring(2, 9), []);
+
+    return (
+        <div className={`relative flex items-center justify-center ${sizeClass} shrink-0 pointer-events-none select-none`}>
+            {/* SVG Document shape chassis */}
+            <svg
+                viewBox="0 0 40 50"
+                className="w-full h-full drop-shadow-[0_2px_5px_rgba(0,0,0,0.2)]"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+            >
+                <defs>
+                    <linearGradient id={`grad-${gradIdSuffix}`} x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" stopColor={gradient.start} />
+                        <stop offset="100%" stopColor={gradient.end} />
+                    </linearGradient>
+                </defs>
+                {/* File outline card */}
+                <path
+                    d="M 4 2 
+                       H 28 
+                       L 38 12 
+                       V 46 
+                       A 2 2 0 0 1 36 48 
+                       H 6 
+                       A 2 2 0 0 1 4 46 
+                       Z"
+                    fill={`url(#grad-${gradIdSuffix})`}
+                    stroke="rgba(255,255,255,0.15)"
+                    strokeWidth="1.2"
+                />
+                {/* Fold corner */}
+                <path
+                    d="M 28 2 
+                       V 10 
+                       A 2 2 0 0 0 30 12 
+                       H 38 
+                       Z"
+                    fill="rgba(255, 255, 255, 0.25)"
+                />
+            </svg>
+
+            {/* Centered Overlay Lucide icon and Label */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-[20%] text-white">
+                <Icon className="w-1/2 h-1/2 opacity-95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.2)]" strokeWidth={2.0} />
+                {label && (
+                    <span className="text-[7.5px] font-bold tracking-wider mt-1 uppercase opacity-90 drop-shadow-[0_1px_1.5px_rgba(0,0,0,0.4)] truncate max-w-full">
+                        {label}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
 }

@@ -8,6 +8,25 @@ import { isAndroidPlatform, showFileDialogFallback, pickWithFallback, sanitizeFi
 import { useSettings } from '../context/SettingsContext';
 import type { Store } from '@tauri-apps/plugin-store';
 
+async function getUniqueSavePath(dirPath: string, filename: string): Promise<string> {
+    const cleanDir = dirPath.replace(/[\\/]+$/, '');
+    const separator = dirPath.includes('\\') ? '\\' : '/';
+    
+    const lastDot = filename.lastIndexOf('.');
+    const name = lastDot !== -1 ? filename.substring(0, lastDot) : filename;
+    const ext = lastDot !== -1 ? filename.substring(lastDot) : '';
+    
+    let candidatePath = `${cleanDir}${separator}${filename}`;
+    let counter = 1;
+    
+    while (await invoke<boolean>('cmd_file_exists', { path: candidatePath })) {
+        candidatePath = `${cleanDir}${separator}${name} (${counter})${ext}`;
+        counter++;
+    }
+    
+    return candidatePath;
+}
+
 interface ProgressPayload {
     id: string;
     percent: number;
@@ -73,6 +92,19 @@ export function useFileDownload(store: Store | null) {
         }
     }, [downloadQueue, settings.maxConcurrentDownloads]);
 
+    // Auto-clear finished downloads after 7 seconds if no other active/pending transfers exist
+    useEffect(() => {
+        const hasFinished = downloadQueue.some(i => i.status === 'success');
+        const hasActive = downloadQueue.some(i => i.status === 'pending' || i.status === 'downloading');
+        
+        if (hasFinished && !hasActive) {
+            const timer = setTimeout(() => {
+                clearFinished();
+            }, 7000);
+            return () => clearTimeout(timer);
+        }
+    }, [downloadQueue]);
+
     const processItem = async (item: DownloadItem) => {
         activeCountRef.current++;
         setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'downloading', progress: 0 } : i));
@@ -105,7 +137,7 @@ export function useFileDownload(store: Store | null) {
                 req: {
                     message_id: item.messageId,
                     save_path: savePath,
-                    folder_id: item.folderId,
+                    folder_id: item.folderId === -999 ? null : item.folderId,
                     transfer_id: item.id
                 }
             });
@@ -113,8 +145,30 @@ export function useFileDownload(store: Store | null) {
             if (cancelledRef.current.has(item.id)) {
                 cancelledRef.current.delete(item.id);
             } else {
-                setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'success', progress: 100 } : i));
-                toast.success(`Downloaded: ${item.filename}`);
+                const finalPath = savePath || undefined;
+                setDownloadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'success', progress: 100, savePath: finalPath } : i));
+
+                if (finalPath) {
+                    toast.success(`Downloaded: ${item.filename}`, {
+                        description: `Saved to ${finalPath}`,
+                        action: {
+                            label: 'Open',
+                            onClick: () => {
+                                invoke('cmd_open_file_externally', { path: finalPath }).catch(err => {
+                                    toast.error(`Failed to open file: ${err}`);
+                                });
+                            }
+                        },
+                        duration: 8000
+                    });
+                } else {
+                    toast.success(`Downloaded: ${item.filename}`);
+                }
+
+                // Auto-clear successful download from queue after 5 seconds
+                setTimeout(() => {
+                    setDownloadQueue(q => q.filter(i => i.id !== item.id));
+                }, 5000);
             }
         } catch (e) {
             if (!cancelledRef.current.has(item.id)) {
@@ -161,19 +215,22 @@ export function useFileDownload(store: Store | null) {
             return;
         }
 
-        const enqueueFiles = (dir: string) => {
+        const enqueueFiles = async (dir: string) => {
             const separator = dir.includes('\\') ? '\\' : '/';
-            const newItems: DownloadItem[] = files.map(file => {
+            const newItems: DownloadItem[] = [];
+            for (const file of files) {
                 const sanitizedName = sanitizeFilename(file.name);
-                return {
+                const uniquePath = await getUniqueSavePath(dir, sanitizedName);
+                const finalName = uniquePath.substring(uniquePath.lastIndexOf(separator) + 1);
+                newItems.push({
                     id: Math.random().toString(36).substr(2, 9),
                     messageId: file.id,
-                    filename: sanitizedName,
+                    filename: finalName,
                     folderId,
                     status: 'pending' as const,
-                    savePath: dir.endsWith(separator) ? `${dir}${sanitizedName}` : `${dir}${separator}${sanitizedName}`
-                };
-            });
+                    savePath: uniquePath
+                });
+            }
             setDownloadQueue(prev => [...prev, ...newItems]);
             toast.info(`Queued ${files.length} files for download`);
         };
@@ -193,7 +250,7 @@ export function useFileDownload(store: Store | null) {
         );
         if (!dirPath) return;
 
-        enqueueFiles(dirPath);
+        await enqueueFiles(dirPath);
     };
 
     const clearFinished = () => {

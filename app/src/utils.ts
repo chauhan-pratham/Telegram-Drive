@@ -21,9 +21,8 @@ export function formatBytes(bytes: number, decimals = 2) {
 
 // ── File type classification ────────────────────────────────────────────
 
-const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi'] as const;
+const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'flv', 'm4v'] as const;
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'opus'] as const;
-const MEDIA_EXTENSIONS: readonly string[] = [...VIDEO_EXTENSIONS, ...AUDIO_EXTENSIONS];
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'] as const;
 
 const endsWithAny = (name: string, exts: readonly string[]) => {
@@ -31,15 +30,58 @@ const endsWithAny = (name: string, exts: readonly string[]) => {
     return exts.some(ext => lower.endsWith(ext));
 };
 
-export const isMediaFile   = (name: string) => endsWithAny(name, MEDIA_EXTENSIONS);
-export const isVideoFile   = (name: string) => endsWithAny(name, VIDEO_EXTENSIONS);
-export const isAudioFile   = (name: string) => endsWithAny(name, AUDIO_EXTENSIONS);
-export const isImageFile   = (name: string) => endsWithAny(name, IMAGE_EXTENSIONS);
-export const isPdfFile     = (name: string) => name.toLowerCase().endsWith('.pdf');
+export const isVideoFile = (name: string, mime?: string) => {
+    if (endsWithAny(name, VIDEO_EXTENSIONS)) return true;
+    if (mime && mime.toLowerCase().startsWith('video/')) return true;
+    return false;
+};
+
+export const isAudioFile = (name: string, mime?: string) => {
+    if (endsWithAny(name, AUDIO_EXTENSIONS)) return true;
+    if (mime && mime.toLowerCase().startsWith('audio/')) return true;
+    return false;
+};
+
+export const isMediaFile = (name: string, mime?: string) => {
+    return isVideoFile(name, mime) || isAudioFile(name, mime);
+};
+
+export const isImageFile = (name: string, mime?: string) => {
+    if (endsWithAny(name, IMAGE_EXTENSIONS)) return true;
+    if (mime && mime.toLowerCase().startsWith('image/')) return true;
+    // Special case: check if hardcoded photo name
+    if (name.toLowerCase() === 'photo.jpg') return true;
+    return false;
+};
+
+export const isPdfFile = (name: string, mime?: string) => {
+    if (name.toLowerCase().endsWith('.pdf')) return true;
+    if (mime && mime.toLowerCase() === 'application/pdf') return true;
+    return false;
+};
+
 export const isZipFile     = (name: string) => name.toLowerCase().endsWith('.zip');
 export const isRarFile     = (name: string) => name.toLowerCase().endsWith('.rar');
 export const isSevenZFile  = (name: string) => name.toLowerCase().endsWith('.7z');
-export const isArchiveFile = (name: string) => isZipFile(name) || isRarFile(name) || isSevenZFile(name);
+
+export const isArchiveFile = (name: string, mime?: string) => {
+    const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'] as const;
+    if (endsWithAny(name, archiveExts)) return true;
+    if (mime) {
+        const m = mime.toLowerCase();
+        if (
+            m === 'application/zip' ||
+            m === 'application/x-zip-compressed' ||
+            m === 'application/x-rar-compressed' ||
+            m === 'application/x-7z-compressed' ||
+            m === 'application/x-tar' ||
+            m === 'application/gzip'
+        ) {
+            return true;
+        }
+    }
+    return false;
+};
 
 // ── HTML file input fallback for when Tauri dialog open() fails ──────────
 // Creates a hidden <input type="file"> element, triggers it, and returns
@@ -290,5 +332,25 @@ export function createDragGhost(name: string, isFolder?: boolean, count?: number
 
     document.body.appendChild(ghost);
     return ghost;
+}
+
+export function formatDate(timestampStr?: string) {
+    if (!timestampStr) return '-';
+    const ts = parseInt(timestampStr, 10);
+    if (isNaN(ts)) return timestampStr;
+    if (ts < 10000000) return timestampStr;
+    try {
+        return new Date(ts * 1000).toLocaleString(undefined, {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+    } catch {
+        return timestampStr;
+    }
 }
 

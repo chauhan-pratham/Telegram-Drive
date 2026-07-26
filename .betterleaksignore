@@ -1,0 +1,14 @@
+# Dependency and build folders
+node_modules/
+**/node_modules/
+target/
+**/target/
+dist/
+**/dist/
+build/
+**/build/
+.git/
+
+# Lockfiles and configuration
+package-lock.json
+Cargo.lock

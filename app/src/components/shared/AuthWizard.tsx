@@ -1,30 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { motion, AnimatePresence } from "framer-motion";
-import { Phone, Key, Lock, ArrowRight, Settings, ShieldCheck, Sun, Moon, HelpCircle, ExternalLink, X, Heart, QrCode } from "lucide-react";
+import { Phone, Key, Lock, ArrowRight, Settings, ShieldCheck, HelpCircle, ExternalLink, X, QrCode } from "lucide-react";
 import { load } from '@tauri-apps/plugin-store';
-import { useTheme } from '../../context/ThemeContext';
 import { open } from '@tauri-apps/plugin-shell';
 import { QRCodeSVG } from 'qrcode.react';
 
 type Step = "setup" | "phone" | "code" | "password";
 
-function AuthThemeToggle() {
-    const { theme, toggleTheme } = useTheme();
-    return (
-        <button
-            onClick={toggleTheme}
-            className="absolute top-[calc(1rem+env(safe-area-inset-top,24px))] right-4 p-3 rounded-full bg-white/10 hover:bg-white/20 transition-colors z-10"
-            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-        >
-            {theme === 'dark' ? (
-                <Sun className="w-5 h-5 text-white" />
-            ) : (
-                <Moon className="w-5 h-5 text-white" />
-            )}
-        </button>
-    );
-}
 export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const isBrowser = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window);
 
@@ -43,7 +26,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     Please open the <strong>Telegram Drive</strong> window in your OS taskbar/dock to continue.
                 </div>
             </div>
-        )
+        );
     }
 
     const [step, setStep] = useState<Step>("setup");
@@ -58,7 +41,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     const [error, setError] = useState<string | null>(null);
     const [floodWait, setFloodWait] = useState<number | null>(null);
     const [showHelp, setShowHelp] = useState(false);
-    const [showDonate, setShowDonate] = useState(false);
     const [loginMethod, setLoginMethod] = useState<'phone' | 'qr'>('phone');
     const isMobile = typeof navigator !== 'undefined' && /android|iphone|ipad|ipod/i.test(navigator.userAgent.toLowerCase());
 
@@ -67,10 +49,10 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             setLoginMethod('phone');
         }
     }, [isMobile, loginMethod]);
+
     const [qrUrl, setQrUrl] = useState<string | null>(null);
     const [qrPolling, setQrPolling] = useState(false);
     const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
 
     useEffect(() => {
         if (!floodWait) return;
@@ -95,7 +77,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                     setApiHash(savedHash);
                 }
             } catch {
-                // config not found, starting fresh
+                // config not found
             }
         };
         initStore();
@@ -108,7 +90,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             await store.set('api_hash', apiHash);
             await store.save();
         } catch {
-            // store write failure, non-critical
+            // non-critical
         }
     };
 
@@ -120,37 +102,29 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
             return;
         }
 
-        if (!apiId || !apiHash) {
-            setError("Both API ID and Hash are required.");
+        if (!apiId.trim() || !apiHash.trim()) {
+            setError("Please fill in both API ID and API Hash.");
             return;
         }
-        setError(null);
-        await saveCredentials();
-        setStep("phone");
-        setLoginMethod('phone');
-        setQrUrl(null);
-        setQrPolling(false);
-    };
 
-    const handleQrLogin = async () => {
-        setError(null);
         setLoading(true);
+        setError(null);
         try {
-            const idInt = parseInt(apiId, 10);
-            if (isNaN(idInt)) throw new Error("API ID must be a number");
-
-            const url = await invoke<string>("cmd_auth_qr_login", {
-                apiId: idInt,
-                apiHash: apiHash
+            await saveCredentials();
+            const res = await invoke<{ success: boolean; next_step?: string }>("cmd_connect", {
+                apiId,
+                apiHash
             });
 
-            if (url === "__authorized__") {
-                onLogin();
-                return;
+            if (res.success) {
+                if (res.next_step === 'authenticated') {
+                    onLogin();
+                } else if (res.next_step === 'phone') {
+                    setStep("phone");
+                }
+            } else {
+                setError("Failed to initialize Telegram client.");
             }
-
-            setQrUrl(url);
-            setQrPolling(true);
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
         } finally {
@@ -158,65 +132,32 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         }
     };
 
-    // QR polling effect
-    useEffect(() => {
-        if (!qrPolling) {
-            if (qrPollRef.current) {
-                clearInterval(qrPollRef.current);
-                qrPollRef.current = null;
-            }
+    const handlePhoneSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const trimmed = phone.replace(/\s+/g, '');
+        if (!trimmed) {
+            setError("Please enter your phone number.");
             return;
         }
 
-        qrPollRef.current = setInterval(async () => {
-            try {
-                const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_qr_poll");
-                if (res.success) {
-                    setQrPolling(false);
-                    if (res.next_step === "password") {
-                        setStep("password");
-                    } else {
-                        onLogin();
-                    }
-                }
-                // If next_step === "waiting", keep polling
-            } catch {
-                // Polling error — keep trying silently
-            }
-        }, 3000);
-
-        return () => {
-            if (qrPollRef.current) {
-                clearInterval(qrPollRef.current);
-                qrPollRef.current = null;
-            }
-        };
-    }, [qrPolling, apiId, apiHash]);
-
-    const handlePhoneSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
         setLoading(true);
         setError(null);
         try {
-            const idInt = parseInt(apiId, 10);
-            if (isNaN(idInt)) throw new Error("API ID must be a number");
-
-            await invoke("cmd_auth_request_code", {
-                phone,
-                apiId: idInt,
-                apiHash: apiHash
-            });
-            setStep("code");
+            const res = await invoke<{ success: boolean; next_step?: string; flood_wait_seconds?: number }>("cmd_auth_request_code", { phone: trimmed });
+            if (res.success) {
+                setStep("code");
+            } else if (res.flood_wait_seconds) {
+                setFloodWait(res.flood_wait_seconds);
+            } else {
+                setError("Failed to send verification code.");
+            }
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : JSON.stringify(err);
-            if (msg.includes("FLOOD_WAIT_")) {
-                const parts = msg.split("FLOOD_WAIT_");
-                if (parts[1]) {
-                    const seconds = parseInt(parts[1]);
-                    if (!isNaN(seconds)) {
-                        setFloodWait(seconds);
-                        return;
-                    }
+            const msg = err instanceof Error ? err.message : String(err);
+            const match = msg.match(/flood wait/i);
+            if (match) {
+                const secondsMatch = msg.match(/(\d+)/);
+                if (secondsMatch) {
+                    setFloodWait(parseInt(secondsMatch[1], 10));
                 }
             }
             setError(msg);
@@ -225,18 +166,52 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         }
     };
 
-    const handleCodeSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const stopQrPolling = () => {
+        if (qrPollRef.current) {
+            clearInterval(qrPollRef.current);
+            qrPollRef.current = null;
+        }
+        setQrPolling(false);
+    };
+
+    useEffect(() => {
+        return () => { stopQrPolling(); };
+    }, []);
+
+    const startQrPolling = () => {
+        stopQrPolling();
+        setQrPolling(true);
+        qrPollRef.current = setInterval(async () => {
+            try {
+                const status = await invoke<{ status: string }>("cmd_auth_qr_poll");
+                if (status.status === 'success') {
+                    stopQrPolling();
+                    onLogin();
+                } else if (status.status === 'expired') {
+                    stopQrPolling();
+                    setError("QR Code expired. Click refresh to generate a new one.");
+                } else if (status.status === 'password_needed') {
+                    stopQrPolling();
+                    setStep("password");
+                }
+            } catch {
+                // Poll attempt error
+            }
+        }, 2000);
+    };
+
+    const handleQrLogin = async () => {
         setLoading(true);
         setError(null);
         try {
-            const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_sign_in", { code });
-            if (res.success) {
+            const res = await invoke<{ success: boolean; url?: string; status?: string }>("cmd_auth_qr_login");
+            if (res.success && res.url) {
+                setQrUrl(res.url);
+                startQrPolling();
+            } else if (res.status === 'authenticated') {
                 onLogin();
-            } else if (res.next_step === "password") {
-                setStep("password");
             } else {
-                setError("Unknown error");
+                setError("Failed to generate QR code.");
             }
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : String(err));
@@ -245,8 +220,45 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
         }
     };
 
+    const handleCodeSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const trimmedCode = code.replace(/\s+/g, '');
+        if (!trimmedCode) {
+            setError("Please enter the verification code.");
+            return;
+        }
+
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await invoke<{ success: boolean; next_step?: string }>("cmd_auth_sign_in", { code: trimmedCode });
+            if (res.success) {
+                onLogin();
+            } else if (res.next_step === 'password') {
+                setStep("password");
+            } else {
+                setError("Sign in failed.");
+            }
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.toLowerCase().includes("password")) {
+                setStep("password");
+                setError("Two-Factor Authentication is enabled. Please enter your cloud password.");
+            } else {
+                setError(msg);
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handlePasswordSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (!password) {
+            setError("Please enter your cloud password.");
+            return;
+        }
+
         setLoading(true);
         setError(null);
         try {
@@ -264,20 +276,18 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
     };
 
     return (
-        <div className="h-full w-full auth-gradient flex items-center justify-center p-6 pt-[calc(1.5rem+env(safe-area-inset-top,24px))] relative">
-            <AuthThemeToggle />
-
+        <div className="h-full w-full auth-gradient flex items-center justify-center p-6 pt-[calc(1.5rem+env(safe-area-inset-top,24px))] relative select-none">
             <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 className="auth-glass p-8 rounded-3xl shadow-2xl w-full max-w-md"
             >
                 <div className="text-center mb-8">
-                    <div className="w-20 h-20 mb-6 mx-auto flex items-center justify-center filter drop-shadow-lg">
-                        <img src="/logo.svg" alt="Logo" className="w-full h-full" />
+                    <div className="w-20 h-20 mb-4 mx-auto flex items-center justify-center filter drop-shadow-lg">
+                        <img src="/logo.svg?v=2" alt="Logo" className="w-full h-full" />
                     </div>
                     <h1 className="text-2xl font-bold text-white mb-1 tracking-tight">Telegram Drive</h1>
-                    <p className="text-sm text-white/60 font-medium">Self-Hosted Secure Storage</p>
+                    <p className="text-sm text-white/60 font-medium">Self-Hosted Secure Cloud Storage</p>
                 </div>
 
                 <AnimatePresence mode="wait">
@@ -307,8 +317,6 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         </motion.div>
                     ) : (
                         <>
-
-
                             {step === "setup" && (
                                 <motion.form
                                     key="setup"
@@ -322,26 +330,26 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                         <div>
                                             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">API ID</label>
                                             <div className="relative">
-                                                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon text-white/40" />
                                                 <input
                                                     type="text"
                                                     value={apiId}
                                                     onChange={(e) => setApiId(e.target.value)}
                                                     placeholder="12345678"
-                                                    className="w-full glass-input rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all font-mono text-sm"
+                                                    className="w-full glass-input rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all font-mono text-sm"
                                                 />
                                             </div>
                                         </div>
                                         <div>
                                             <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">API Hash</label>
                                             <div className="relative">
-                                                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon text-white/40" />
                                                 <input
                                                     type="text"
                                                     value={apiHash}
                                                     onChange={(e) => setApiHash(e.target.value)}
                                                     placeholder="abcdef123456..."
-                                                    className="w-full glass-input rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all font-mono text-sm"
+                                                    className="w-full glass-input rounded-xl pl-12 pr-4 py-3.5 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all font-mono text-sm"
                                                 />
                                             </div>
                                         </div>
@@ -349,32 +357,22 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
 
                                     <button
                                         type="submit"
-                                        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 active:scale-[0.98]"
+                                        disabled={loading}
+                                        className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
                                     >
-                                        Configure <Settings className="w-4 h-4" />
+                                        {loading ? "Connecting..." : <>Configure <Settings className="w-4 h-4" /></>}
                                     </button>
 
                                     <button
                                         type="button"
                                         onClick={() => setShowHelp(true)}
-                                        className="w-full text-xs text-blue-300 hover:text-white transition-colors flex items-center justify-center gap-1.5 py-1"
+                                        className="w-full text-xs text-blue-300 hover:text-white transition-colors flex items-center justify-center gap-1.5 py-1 cursor-pointer"
                                     >
-                                        <HelpCircle className="w-3 h-3" />
+                                        <HelpCircle className="w-3.5 h-3.5" />
                                         How do I get my API credentials?
                                     </button>
-
-                                    {import.meta.env.DEV && (
-                                        <button
-                                            type="button"
-                                            onClick={() => onLogin()}
-                                            className="w-full text-xs text-red-400/60 hover:text-red-300 transition-colors py-1"
-                                        >
-                                            Dev Mode
-                                        </button>
-                                    )}
                                 </motion.form>
                             )}
-
 
                             {step === "phone" && (
                                 <motion.div
@@ -384,30 +382,29 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                     exit={{ x: -20, opacity: 0 }}
                                     className="space-y-6"
                                 >
-                                    {/* Phone / QR Toggle */}
                                     {!isMobile && (
-                                        <div className="flex rounded-xl overflow-hidden border border-white/10">
+                                        <div className="flex rounded-xl overflow-hidden border border-white/10 p-0.5 bg-white/5">
                                             <button
                                                 type="button"
                                                 onClick={() => { setLoginMethod('phone'); setQrUrl(null); setQrPolling(false); setError(null); }}
-                                                className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                                className={`flex-1 py-2 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
                                                     loginMethod === 'phone'
-                                                        ? 'bg-white/15 text-white'
+                                                        ? 'bg-white/20 text-white shadow-sm'
                                                         : 'text-white/50 hover:text-white/70'
                                                 }`}
                                             >
-                                                <Phone className="w-4 h-4" /> Phone Number
+                                                <Phone className="w-3.5 h-3.5" /> Phone Number
                                             </button>
                                             <button
                                                 type="button"
                                                 onClick={() => { setLoginMethod('qr'); setError(null); handleQrLogin(); }}
-                                                className={`flex-1 py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+                                                className={`flex-1 py-2 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
                                                     loginMethod === 'qr'
-                                                        ? 'bg-white/15 text-white'
+                                                        ? 'bg-white/20 text-white shadow-sm'
                                                         : 'text-white/50 hover:text-white/70'
                                                 }`}
                                             >
-                                                <QrCode className="w-4 h-4" /> QR Code
+                                                <QrCode className="w-3.5 h-3.5" /> QR Code
                                             </button>
                                         </div>
                                     )}
@@ -417,13 +414,13 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                             <div className="space-y-2">
                                                 <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Phone Number</label>
                                                 <div className="relative">
-                                                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                                    <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon text-white/40" />
                                                     <input
                                                         type="tel"
                                                         value={phone}
                                                         onChange={(e) => setPhone(e.target.value)}
                                                         placeholder="+1 234 567 8900"
-                                                        className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg tracking-wide"
+                                                        className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all text-lg tracking-wide"
                                                     />
                                                 </div>
                                             </div>
@@ -432,11 +429,11 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                                 <button
                                                     type="submit"
                                                     disabled={loading}
-                                                    className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                                                 >
                                                     {loading ? "Connecting..." : <>Continue <ArrowRight className="w-5 h-5" /></>}
                                                 </button>
-                                                <button type="button" onClick={() => setStep("setup")} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                                <button type="button" onClick={() => setStep("setup")} className="text-xs text-gray-400 hover:text-white transition-colors py-2 cursor-pointer">
                                                     Back to Configuration
                                                 </button>
                                             </div>
@@ -460,8 +457,8 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                                         />
                                                     </div>
                                                     <div className="text-center space-y-1">
-                                                        <p className="text-sm text-white/80">Scan with your Telegram app</p>
-                                                        <p className="text-xs text-white/40">Settings &gt; Devices &gt; Link Desktop Device</p>
+                                                        <p className="text-sm text-white/80 font-medium">Scan with your Telegram app</p>
+                                                        <p className="text-xs text-white/50">Settings &gt; Devices &gt; Link Desktop Device</p>
                                                     </div>
                                                     {qrPolling && (
                                                         <div className="flex items-center gap-2 text-xs text-blue-300">
@@ -472,20 +469,19 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                                     <button
                                                         type="button"
                                                         onClick={handleQrLogin}
-                                                        className="text-xs text-white/50 hover:text-white transition-colors"
+                                                        className="text-xs text-white/50 hover:text-white transition-colors cursor-pointer"
                                                     >
                                                         Refresh QR Code
                                                     </button>
                                                 </>
                                             )}
-                                            <button type="button" onClick={() => { setStep("setup"); setQrPolling(false); }} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                            <button type="button" onClick={() => { setStep("setup"); setQrPolling(false); }} className="text-xs text-gray-400 hover:text-white transition-colors py-2 cursor-pointer">
                                                 Back to Configuration
                                             </button>
                                         </div>
                                     )}
                                 </motion.div>
                             )}
-
 
                             {step === "code" && (
                                 <motion.form
@@ -499,13 +495,14 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                     <div className="space-y-2">
                                         <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Telegram Code</label>
                                         <div className="relative">
-                                            <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                            <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon text-white/40" />
                                             <input
                                                 type="text"
                                                 value={code}
                                                 onChange={(e) => setCode(e.target.value)}
                                                 placeholder="1 2 3 4 5"
-                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-2xl tracking-[0.5em] font-mono text-center"
+                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all text-2xl tracking-[0.5em] font-mono text-center"
+                                                autoFocus
                                             />
                                         </div>
                                     </div>
@@ -514,17 +511,16 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                         <button
                                             type="submit"
                                             disabled={loading}
-                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98]"
+                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                                         >
                                             {loading ? "Verifying..." : "Sign In"}
                                         </button>
-                                        <button type="button" onClick={() => setStep("phone")} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                        <button type="button" onClick={() => setStep("phone")} className="text-xs text-gray-400 hover:text-white transition-colors py-2 cursor-pointer">
                                             Change Phone Number
                                         </button>
                                     </div>
                                 </motion.form>
                             )}
-
 
                             {step === "password" && (
                                 <motion.form
@@ -544,13 +540,13 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                         </div>
                                         <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Cloud Password</label>
                                         <div className="relative">
-                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon" />
+                                            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 auth-form-icon text-white/40" />
                                             <input
                                                 type="password"
                                                 value={password}
                                                 onChange={(e) => setPassword(e.target.value)}
                                                 placeholder="Enter your password"
-                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-all text-lg"
+                                                className="w-full glass-input rounded-xl pl-12 pr-4 py-4 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-all text-lg"
                                                 autoFocus
                                             />
                                         </div>
@@ -560,11 +556,11 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                         <button
                                             type="submit"
                                             disabled={loading || !password}
-                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+                                            className="w-full bg-white text-black hover:bg-gray-100 font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                                         >
                                             {loading ? "Verifying..." : "Unlock"}
                                         </button>
-                                        <button type="button" onClick={() => { setStep("code"); setPassword(""); setError(null); }} className="text-xs text-gray-500 hover:text-white transition-colors py-2">
+                                        <button type="button" onClick={() => { setStep("code"); setPassword(""); setError(null); }} className="text-xs text-gray-400 hover:text-white transition-colors py-2 cursor-pointer">
                                             Back to Code Entry
                                         </button>
                                     </div>
@@ -584,19 +580,9 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         <p className="text-red-400 text-sm leading-snug">{error}</p>
                     </motion.div>
                 )}
-
-                <div className="mt-8 pt-4 border-t border-white/5 text-center">
-                    <button
-                        onClick={() => setShowDonate(true)}
-                        className="text-xs text-telegram-subtext hover:text-telegram-text transition-colors flex items-center justify-center gap-1.5 mx-auto"
-                    >
-                        <Heart className="w-3.5 h-3.5 text-red-500/80" />
-                        Donate
-                    </button>
-                </div>
             </motion.div>
 
-
+            {/* Help Dialog */}
             <AnimatePresence>
                 {showHelp && (
                     <motion.div
@@ -615,7 +601,7 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                         >
                             <div className="flex items-center justify-between mb-6">
                                 <h2 className="text-xl font-bold text-telegram-text">Getting Started</h2>
-                                <button onClick={() => setShowHelp(false)} className="p-2 hover:bg-telegram-hover rounded-lg transition-colors">
+                                <button onClick={() => setShowHelp(false)} className="p-2 hover:bg-telegram-hover rounded-lg transition-colors cursor-pointer">
                                     <X className="w-5 h-5 text-telegram-subtext" />
                                 </button>
                             </div>
@@ -666,60 +652,11 @@ export function AuthWizard({ onLogin }: { onLogin: () => void }) {
                                 <button
                                     type="button"
                                     onClick={(e) => { e.preventDefault(); open('https://my.telegram.org'); }}
-                                    className="w-full bg-telegram-primary text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-telegram-primary/90 transition-colors"
+                                    className="w-full bg-telegram-primary text-white font-semibold py-3 rounded-xl flex items-center justify-center gap-2 hover:bg-telegram-primary/90 transition-colors cursor-pointer"
                                 >
                                     <ExternalLink className="w-4 h-4" />
                                     Open my.telegram.org
                                 </button>
-                            </div>
-                        </motion.div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-                {showDonate && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-                        onClick={() => setShowDonate(false)}
-                    >
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            className="glass bg-telegram-surface border border-telegram-border rounded-2xl p-6 max-w-sm w-full shadow-2xl"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="relative flex items-center justify-center mb-6">
-                                <h2 className="text-xl font-bold text-telegram-text text-center">
-                                    Support the Project
-                                </h2>
-                                <button onClick={() => setShowDonate(false)} className="absolute right-0 p-2 hover:bg-telegram-hover rounded-lg transition-colors">
-                                    <X className="w-5 h-5 text-telegram-subtext" />
-                                </button>
-                            </div>
-
-                            <div className="space-y-4 text-center">
-                                <p className="text-sm text-telegram-subtext mb-6">
-                                    If you find Telegram Drive useful, consider supporting its development!
-                                </p>
-
-                                <div className="space-y-4">
-                                    <a href="#" onClick={(e) => { e.preventDefault(); open('https://www.paypal.me/Caamer20'); }} className="block hover:opacity-80 transition-opacity">
-                                        <img src="https://raw.githubusercontent.com/stefan-niedermann/paypal-donate-button/master/paypal-donate-button.png" alt="Donate with PayPal" width="200" className="mx-auto" />
-                                    </a>
-
-                                    <a href="#" onClick={(e) => { e.preventDefault(); open('https://link.trustwallet.com/send?address=ltc1q6wkr5ac4u0pxx4hx7xgwn0gsaku25ws0df73rp&asset=c2'); }} className="block hover:opacity-80 transition-opacity">
-                                        <img src="https://img.shields.io/badge/Donate-LTC-345D9D?style=for-the-badge&logo=litecoin&logoColor=white" alt="Donate LTC" className="mx-auto h-[28px]" />
-                                    </a>
-
-                                    <a href="#" onClick={(e) => { e.preventDefault(); open('https://link.trustwallet.com/send?asset=c0&address=bc1q5pt7m2fk6w0dzsnf6vvd5k6nw5k44785286ujy'); }} className="block hover:opacity-80 transition-opacity">
-                                        <img src="https://img.shields.io/badge/Donate-BTC-F7931A?style=for-the-badge&logo=bitcoin&logoColor=white" alt="Donate BTC" className="mx-auto h-[28px]" />
-                                    </a>
-                                </div>
                             </div>
                         </motion.div>
                     </motion.div>

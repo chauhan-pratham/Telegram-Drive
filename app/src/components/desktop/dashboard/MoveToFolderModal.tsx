@@ -1,4 +1,4 @@
-import { Plus, HardDrive, Folder } from 'lucide-react';
+import { Plus, HardDrive, Folder, Users } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { TelegramFolder } from '../../../types';
 
@@ -23,7 +23,7 @@ export function MoveToFolderModal({ folders, onClose, onSelect, activeFolderId, 
                     <button onClick={onClose} className="text-telegram-subtext hover:text-telegram-text"><Plus className="w-5 h-5 rotate-45" /></button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                    {activeFolderId !== null && (
+                    {activeFolderId !== null && activeFolderId !== -999 && (
                         <button
                             onClick={() => onSelect(null)}
                             className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-left text-telegram-text hover:bg-telegram-hover transition-colors"
@@ -43,8 +43,13 @@ export function MoveToFolderModal({ folders, onClose, onSelect, activeFolderId, 
                                 onClick={() => onSelect(f.id)}
                                 className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-left text-telegram-text hover:bg-telegram-hover transition-colors"
                             >
-                                <div className="w-8 h-8 rounded bg-telegram-hover flex items-center justify-center text-telegram-text">
-                                    <Folder className="w-4 h-4" />
+                                <div className="w-8 h-8 rounded bg-telegram-hover flex items-center justify-center text-telegram-text relative">
+                                    <Folder className="w-4 h-4 text-telegram-primary" />
+                                    {(f.is_shared_with_me || f.is_public || f.username) && (
+                                        <div className="absolute -bottom-0.5 -right-0.5 bg-telegram-surface border border-telegram-border/50 rounded-full p-0.5 shadow-sm flex items-center justify-center">
+                                            <Users className="w-2 h-2 text-telegram-primary" strokeWidth={2} />
+                                        </div>
+                                    )}
                                 </div>
                                 <span className="font-medium">{f.name}</span>
                             </button>

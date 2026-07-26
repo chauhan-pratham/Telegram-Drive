@@ -1,0 +1,151 @@
+Project Name: Telegram Drive (Ad-Free & Hardened Edition)
+
+Tech Stack: Tauri v2 (Rust backend) + React (TypeScript frontend) + Vite
+
+Purpose: A cross-platform desktop app that turns a Telegram account into an unlimited cloud storage drive. Files are stored as messages in a Telegram chat, organized into "folders" (which are Telegram channels). The app includes media streaming, PDF viewing, archive extraction, and file sharing.
+
+---
+
+File Structure & Responsibilities:
+
+Telegram-Drive/
+├── README.md                    # Project docs
+├── sync.bat                     # Sync script
+│
+└── app/                         # Main application
+    ├── package.json             # Node dependencies & scripts
+    ├── vite.config.ts           # Vite bundler config
+    ├── postcss.config.js        # Tailwind CSS config
+    ├── tsconfig.json            # TypeScript config
+    ├── index.html               # HTML entry point
+    │
+    ├── src/                     # React frontend
+    │   ├── main.tsx             # React entry: mounts <App>, registers global error handlers
+    │   ├── App.tsx              # Root component: auth flow (loading → wizard → dashboard), platform detection (mobile/desktop), theme/settings providers, update banner
+    │   ├── types.ts             # All TypeScript interfaces (TelegramFile, Folder, QueueItem, StreamingSettings, VideoTrackInfo, ArchiveEntry, etc.)
+    │   ├── utils.ts             # Utility functions: file type classification (video/audio/image/pdf/archive), clipboard, share API, file dialog fallback, drag ghost creation
+    │   │
+    │   ├── context/             # React context providers
+    │   │   ├── DriveContext.tsx  # Global drive state: selected folder, file type filter, view mode, file selection, folder group management, bulk delete
+    │   │   ├── SettingsContext.tsx # App settings: language, performance mode, streaming quality, proxy config, bandwidth limits, VPN optimizer
+    │   │   ├── ThemeContext.tsx  # Theme switching (light/dark) with CSS variable injection
+    │   │   └── ConfirmContext.tsx # Reusable confirmation dialogs (delete, overwrite, etc.)
+    │   │
+    │   ├── hooks/               # Custom React hooks
+    │   │   ├── useTelegramConnection.ts  # Manages Telegram client lifecycle (sign-in, reconnect, keepalive)
+    │   │   ├── useFileUpload.ts          # File upload queue with progress, chunked uploads, drag-drop, folder zipping
+    │   │   ├── useFileDownload.ts        # File download queue with progress, save dialogs, cancellation
+    │   │   ├── useFileOperations.ts      # CRUD operations: rename, move, delete files/folders
+    │   │   ├── useAdaptiveStreaming.ts   # HLS/fMP4 adaptive streaming: quality switching, bandwidth estimation, track selection
+    │   │   ├── useVideoMetadata.ts       # Fetch video codec/resolution metadata for transcode decisions
+    │   │   ├── useFileDrop.ts            # Drag-and-drop file detection with HTML5 drag events
+    │   │   ├── useNetworkStatus.ts       # Online/offline detection
+    │   │   ├── usePlatform.ts            # iOS/Android/desktop detection
+    │   │   ├── useKeyboardShortcuts.ts   # Keyboard shortcut bindings
+    │   │   ├── useUpdateCheck.ts         # GitHub release check for new versions
+    │   │   ├── useStreamingSettings.ts   # Streaming quality/throttle settings
+    │   │   ├── useCachedVariants.ts      # Manage cached transcode variants
+    │   │   └── moovCache.ts              # moov atom cache for mp4 fast-start
+    │   │
+    │   ├── components/          # UI components
+    │   │   ├── desktop/         # Desktop-specific layout
+    │   │   │   ├── DesktopDashboard.tsx  # Main desktop layout (sidebar + topbar + file explorer)
+    │   │   │   └── dashboard/  # 24 components:
+    │   │   │       ├── Sidebar.tsx / SidebarItem.tsx  # Folder tree navigation with drag-drop reorder
+    │   │   │       ├── TopBar.tsx            # Breadcrumb, search, view toggle, filter dropdown
+    │   │   │       ├── GlobalHeader.tsx      # Upload button, folder creation, settings, logout
+    │   │   │       ├── FileExplorer.tsx      # File grid/list with virtual scrolling
+    │   │   │       ├── FileCard.tsx / FileListItem.tsx  # File display (icon, name, size, date)
+    │   │   │       ├── ContextMenu.tsx       # Right-click menu (download, rename, move, delete, share)
+    │   │   │       ├── PreviewModal.tsx      # Full-screen file preview (images, video, audio, PDF, archives)
+    │   │   │       ├── MediaPlayer.tsx       # Audio/video player with streaming controls
+    │   │   │       ├── AdaptiveMediaPlayer.tsx # HLS player with quality selector and adaptive bitrate
+    │   │   │       ├── PdfViewer.tsx         # Infinite-scroll PDF reader with page caching
+    │   │   │       ├── ArchiveViewerModal.tsx # Browse zip/rar/7z contents without extracting
+    │   │   │       ├── UploadQueue.tsx / DownloadQueue.tsx # Progress panels for active transfers
+    │   │   │       ├── SettingsModal.tsx     # Full settings UI (proxy, VPN, streaming, theme, language)
+    │   │   │       ├── ShareDialog.tsx       # Generate share links with optional password/expiry
+    │   │   │       ├── RemoteUploadModal.tsx # Upload from URL
+    │   │   │       ├── RenameFileModal.tsx / RenameFolderModal.tsx / MoveToFolderModal.tsx
+    │   │   │       ├── InfoPanel.tsx         # File metadata panel (size, dates, MIME type)
+    │   │   │       ├── BandwidthWidget.tsx   # Real-time bandwidth usage display
+    │   │   │       ├── EmptyState.tsx        # Shown when folder is empty
+    │   │   │       ├── DragDropOverlay.tsx / ExternalDropBlocker.tsx  # Drag-drop UX
+    │   │   │       └── ...
+    │   │   │
+    │   │   ├── mobile/          # Mobile-responsive components
+    │   │   │   ├── MobileDashboard.tsx  # Mobile layout (bottom nav + full-screen panels)
+    │   │   │   ├── BottomNavBar.tsx     # Tab navigation (Files, Uploads, Settings)
+    │   │   │   ├── TouchFileList.tsx    # Touch-optimized file list with swipe actions
+    │   │   │   ├── ActionPopover.tsx    # Bottom sheet for file actions
+    │   │   │   └── RenameFolderSheet.tsx
+    │   │   │
+    │   │   └── shared/          # Shared cross-platform components
+    │   │       ├── AuthWizard.tsx        # Multi-step login: phone → code → 2FA password
+    │   │       ├── FileTypeIcon.tsx      # File extension → icon mapping
+    │   │       ├── ThemeToggle.tsx       # Light/dark mode switch
+    │   │       ├── QualitySelector.tsx   # Streaming quality dropdown
+    │   │       ├── VideoMetaBadge.tsx    # Resolution/codec badge on video cards
+    │   │       ├── UpdateBanner.tsx      # "New version available" banner
+    │   │       └── ErrorBoundary.tsx     # React error boundary
+    │   │
+    │   ├── theme/               # Theming system
+    │   │   ├── themeEngine.ts   # CSS variable injection for themes
+    │   │   └── presets.ts      # Color palettes for light/dark mode
+    │   │
+    │   ├── i18n/               # Internationalization
+    │   │   ├── index.ts        # i18next config
+    │   │   ├── languages.ts    # Supported language list
+    │   │   └── locales/en.json # English translations (extendable for other locales)
+    │   │
+    │   └── mocks/browser-mock.ts  # Polyfills for Tauri APIs in browser dev mode
+    │
+    └── src-tauri/              # Rust backend (Tauri core)
+        ├── Cargo.toml          # Rust dependencies
+        ├── tauri.conf.json     # Tauri app config (window, permissions, updater, bundle)
+        ├── build.rs            # Tauri build script
+        ├── capabilities/       # Tauri v2 capability permissions
+        │   ├── default.json    # Desktop permissions (fs, dialog, shell, clipboard, etc.)
+        │   └── mobile.json     # Mobile permissions
+        ├── icons/              # App icons for all platforms
+        │
+        └── src/
+            ├── main.rs         # Entry point: Linux DMA-BUF fix, then calls lib::run()
+            ├── lib.rs          # Tauri app builder: registers all commands, manages Actix streaming server, sets up JNI cache, defines Android open-file externals
+            │
+            ├── models.rs       # Shared Rust structs: AuthState, AuthResult, FileMetadata, FolderMetadata, FolderGroup, Drive
+            │
+            ├── commands/       # Tauri IPC commands (invoked from React via @tauri-apps/api/core)
+            │   ├── mod.rs      # TelegramState (shared Mutex<Client>, peer cache, cancellation set), module re-exports
+            │   ├── auth.rs     # cmd_connect, cmd_send_code, cmd_sign_in, cmd_check_connection, cmd_logout, cmd_get_me
+            │   ├── fs.rs       # File operations: list files, upload (chunked via messages), download, delete, rename, move, forward between folders
+            │   ├── preview.rs  # Thumbnail/preview generation: image thumbnails, PDF page previews, cache management
+            │   ├── streaming.rs # Stream config management, stream URL generation
+            │   ├── network.rs  # Network diagnostics, proxy test
+            │   ├── settings.rs # App settings persistence (read/write JSON)
+            │   ├── utils.rs    # resolve_peer (folder → Telegram Peer), helper utilities
+            │   ├── api_settings.rs # Telegram API credential management (api_id, api_hash)
+            │   ├── sharing.rs  # Share link generation with password/expiry, link revocation
+            │   ├── video_metadata.rs # Parse video file metadata (codec, resolution, duration) via mp4parse
+            │   ├── archive.rs  # List/extract zip/rar/7z archive contents
+            │   └── folder_groups.rs # Group folders into labeled, color-coded groups
+            │
+            ├── server.rs       # Actix-web streaming server: range-request file serving with auth token validation
+            ├── api_routes.rs   # REST API for uploads (multipart), downloads, folder CRUD, share link handling, cache cleanup (~1823 lines)
+            ├── share_routes.rs # Public share link server: serves shared files via password-protected routes
+            ├── transcode.rs    # HLS/fMP4 transcoding: FFmpeg-based quality variants, segment caching, cleanup (~1600 lines)
+            ├── fmp4_remux.rs   # Fragmented mp4 remuxer for streaming without full transcoding
+            ├── upload_service.rs # Background upload worker with chunking and progress reporting
+            ├── bandwidth.rs    # BandwidthManager: tracks up/down bytes for UI widget
+            ├── vpn_optimizer.rs # VPN/network optimizer: keep-alive, chunk size adjustment, latency detection
+            ├── socks5_bridge.rs # SOCKS5 proxy bridge for MTProto connections
+            ├── db.rs           # SQLite database for file/folder metadata, folder groups, share links
+            ├── mp4_utils.rs    # MP4 moov atom and track parsing utilities
+            └── jni_cache.rs    # JNI method ID caching for Android
+
+Key Architecture Points:
+1. Auth Flow: User enters Telegram API credentials → phone number → verification code → 2FA password (if enabled) → session persisted locally
+2. Storage Model: Each "folder" is actually a Telegram channel. Files are sent as document messages to that channel. The SQLite DB maps this virtual hierarchy.
+3. Streaming: A local Actix-web server (bound to 127.0.0.1) serves media files via range requests. For video, it can create HLS playlists with multiple quality variants via FFmpeg transcoding.
+4. Cross-platform: Desktop (Windows/macOS/Linux) via Tauri v2. Mobile (Android/iOS) with responsive React components and JNI bridges.
+5. Security: All credentials stored locally. Streaming server uses dynamically generated per-session tokens. CSP blocks remote scripts/frames.

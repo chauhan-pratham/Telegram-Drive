@@ -2,10 +2,13 @@ use serde::Serialize;
 use tauri::State;
 use rand::Rng;
 use crate::db::DbConnection;
+use rusqlite::params;
 
 #[derive(Debug, Serialize)]
 pub struct ShareInfo {
     pub id: String,
+    pub folder_id: Option<i64>,
+    pub message_id: i32,
     pub file_name: String,
     pub file_size: i64,
     pub created_at: i64,
@@ -20,8 +23,6 @@ fn generate_share_token() -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
-/// Hash a password using bcrypt (cost factor 12).
-/// bcrypt embeds the salt in the output hash string, so no separate salt storage is needed.
 fn hash_password(password: &str) -> Result<String, String> {
     bcrypt::hash(password, 12).map_err(|e| format!("Password hashing failed: {}", e))
 }
@@ -44,7 +45,6 @@ pub async fn cmd_create_share(
         if pwd.is_empty() {
             None
         } else {
-            // bcrypt embeds the salt in the hash; password_salt column set to NULL.
             let hash = hash_password(pwd)?;
             Some(hash)
         }
@@ -54,27 +54,28 @@ pub async fn cmd_create_share(
 
     let conn = db_pool.lock().map_err(|e| e.to_string())?;
     
-    let mut stmt = conn.prepare(
+    conn.execute(
         "INSERT INTO shared_links (id, folder_id, message_id, file_name, file_size, password_hash, password_salt, expires_at, revoked, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)"
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+        params![
+            token.as_str(),
+            folder_id,
+            message_id as i64,
+            file_name.as_str(),
+            file_size,
+            password_hash.as_deref(),
+            None::<&str>,
+            expires_at,
+            created_at,
+        ]
     ).map_err(|e| e.to_string())?;
-
-    stmt.bind((1, token.as_str())).map_err(|e| e.to_string())?;
-    stmt.bind((2, folder_id)).map_err(|e| e.to_string())?;
-    stmt.bind((3, message_id as i64)).map_err(|e| e.to_string())?;
-    stmt.bind((4, file_name.as_str())).map_err(|e| e.to_string())?;
-    stmt.bind((5, file_size)).map_err(|e| e.to_string())?;
-    stmt.bind((6, password_hash.as_deref())).map_err(|e| e.to_string())?;
-    stmt.bind::<(usize, Option<&str>)>((7, None)).map_err(|e| e.to_string())?;
-    stmt.bind((8, expires_at)).map_err(|e| e.to_string())?;
-    stmt.bind((9, created_at)).map_err(|e| e.to_string())?;
-
-    stmt.next().map_err(|e| e.to_string())?;
 
     let link = format!("http://127.0.0.1:{}/d/{}", crate::STREAM_PORT, token);
 
     Ok(ShareInfo {
         id: token,
+        folder_id,
+        message_id,
         file_name,
         file_size,
         created_at,
@@ -96,25 +97,36 @@ pub async fn cmd_list_shares(
         )
         .map_err(|e| e.to_string())?;
 
-    let mut shares = Vec::new();
-    while let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
-        let id = stmt.read::<String, _>("id").map_err(|e| e.to_string())?;
-        let has_password = stmt.read::<Option<String>, _>("password_hash").ok().flatten().is_some();
-        let expires_at = stmt.read::<Option<i64>, _>("expires_at").ok().flatten();
-        let file_name = stmt.read::<String, _>("file_name").map_err(|e| e.to_string())?;
-        let file_size = stmt.read::<i64, _>("file_size").map_err(|e| e.to_string())?;
-        let created_at = stmt.read::<i64, _>("created_at").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        let id: String = row.get(0)?;
+        let folder_id: Option<i64> = row.get(1)?;
+        let message_id: i64 = row.get(2)?;
+        let file_name: String = row.get(3)?;
+        let file_size: i64 = row.get(4)?;
+        let password_hash: Option<String> = row.get(5)?;
+        let expires_at: Option<i64> = row.get(6)?;
+        let created_at: i64 = row.get(7)?;
+
         let link = format!("http://127.0.0.1:{}/d/{}", crate::STREAM_PORT, id);
-        
-        shares.push(ShareInfo {
+
+        Ok(ShareInfo {
             id,
+            folder_id,
+            message_id: message_id as i32,
             file_name,
             file_size,
             created_at,
             expires_at,
-            has_password,
+            has_password: password_hash.is_some(),
             link,
-        });
+        })
+    }).map_err(|e| e.to_string())?;
+
+    let mut shares = Vec::new();
+    for r in rows {
+        if let Ok(s) = r {
+            shares.push(s);
+        }
     }
     
     Ok(shares)
@@ -126,9 +138,6 @@ pub async fn cmd_revoke_share(
     db_pool: State<'_, DbConnection>,
 ) -> Result<(), String> {
     let conn = db_pool.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("UPDATE shared_links SET revoked = 1 WHERE id = ?").map_err(|e| e.to_string())?;
-    stmt.bind((1, id.as_str())).map_err(|e| e.to_string())?;
-    stmt.next().map_err(|e| e.to_string())?;
-    
+    conn.execute("UPDATE shared_links SET revoked = 1 WHERE id = ?", params![id.as_str()]).map_err(|e| e.to_string())?;
     Ok(())
 }

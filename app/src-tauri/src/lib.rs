@@ -248,8 +248,69 @@ fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Resul
     #[cfg(not(target_os = "android"))]
     {
         use tauri_plugin_opener::OpenerExt;
-        app_handle.opener().open_path(&path, None::<&str>)
-            .map_err(|e| e.to_string())
+
+        let path_buf = std::path::PathBuf::from(&path);
+        if !path_buf.exists() {
+            return Err(format!("File does not exist at: {}", path));
+        }
+
+        // Try primary Tauri opener plugin
+        if app_handle.opener().open_path(&path, None::<&str>).is_ok() {
+            return Ok(());
+        }
+
+        // Desktop OS fallbacks
+        #[cfg(target_os = "windows")]
+        {
+            let normalized_path = path.replace('/', "\\");
+            log::info!("Primary opener failed, attempting Windows cmd start fallback for: {}", normalized_path);
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "start", "", &normalized_path])
+                .status();
+            
+            if let Ok(st) = status {
+                if st.success() {
+                    return Ok(());
+                }
+            }
+            
+            let ps_status = std::process::Command::new("powershell")
+                .args(["-Command", &format!("Start-Process -FilePath '{}'", normalized_path.replace('\'', "''"))])
+                .status();
+
+            if let Ok(st) = ps_status {
+                if st.success() {
+                    return Ok(());
+                }
+            }
+            return Err("Failed to open file using Windows shell".to_string());
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let status = std::process::Command::new("open")
+                .arg(&path)
+                .status();
+            if let Ok(st) = status {
+                if st.success() {
+                    return Ok(());
+                }
+            }
+            return Err("Failed to open file using macOS open command".to_string());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let status = std::process::Command::new("xdg-open")
+                .arg(&path)
+                .status();
+            if let Ok(st) = status {
+                if st.success() {
+                    return Ok(());
+                }
+            }
+            return Err("Failed to open file using xdg-open".to_string());
+        }
     }
 }
 
@@ -454,6 +515,46 @@ pub fn run() {
 
     let app = builder
         .setup(move |app| {
+            // Eagerly initialize grammers_session / libsql before any rusqlite database opens.
+            // This ensures libsql configures the global SQLite C engine before it becomes INITIALIZED.
+            tauri::async_runtime::block_on(async {
+                let _ = grammers_session::storages::SqliteSession::open(":memory:").await;
+            });
+
+            #[cfg(not(target_os = "android"))]
+            if let Some(window) = app.get_webview_window("main") {
+                // Ensure initial dimensions do not exceed screen boundaries
+                if let Ok(Some(monitor)) = window.primary_monitor() {
+                    let monitor_size = monitor.size();
+                    let scale_factor = monitor.scale_factor();
+                    let logical_width = monitor_size.width as f64 / scale_factor;
+                    let logical_height = monitor_size.height as f64 / scale_factor;
+                    
+                    let mut final_w = 1200.0;
+                    let mut final_h = 800.0;
+                    if final_w > logical_width * 0.95 {
+                        final_w = logical_width * 0.95;
+                    }
+                    if final_h > logical_height * 0.95 {
+                        final_h = logical_height * 0.95;
+                    }
+                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(final_w, final_h)));
+                }
+
+                // Recalculate sizes dynamically when scaling adjustments trigger
+                let window_clone = window.clone();
+                window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } = event {
+                        log::info!("Scale factor changed to {}, resizing window logically", scale_factor);
+                        if let Ok(current_size) = window_clone.inner_size() {
+                            let logical_w = current_size.width as f64 / *scale_factor;
+                            let logical_h = current_size.height as f64 / *scale_factor;
+                            let _ = window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(logical_w, logical_h)));
+                        }
+                    }
+                });
+            }
+
             #[cfg(target_os = "android")]
             {
                 // SAFETY NET: Wrap all Android JNI initialization in catch_unwind to prevent
@@ -513,9 +614,70 @@ pub fn run() {
                                                 &[jni::objects::JValue::from(&class_name_jstr)],
                                             ) {
                                                 if let Ok(main_class_obj) = main_class_obj_val.l() {
-                                                    if let Ok(main_class_global) = env.new_global_ref(main_class_obj) {
+                                                    if let Ok(main_class_global) = env.new_global_ref(&main_class_obj) {
                                                         let _ = crate::jni_cache::set_main_activity_class(main_class_global);
                                                         log::info!("JNI: Successfully cached MainActivity class reference globally.");
+
+                                                        // Eagerly cache MainActivity static method IDs
+                                                        let main_class_val: jni::objects::JClass = (&main_class_obj).into();
+                                                        if let Ok(method_id) = env.get_static_method_id(
+                                                            &main_class_val,
+                                                            "saveFileToPublicDownloads",
+                                                            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
+                                                        ) {
+                                                            crate::jni_cache::set_save_file_method(method_id.into_raw());
+                                                            log::info!("JNI: Successfully cached saveFileToPublicDownloads method ID.");
+                                                        }
+                                                        if let Ok(method_id) = env.get_static_method_id(
+                                                            &main_class_val,
+                                                            "openFileExternally",
+                                                            "(Ljava/lang/String;Ljava/lang/String;)Z",
+                                                        ) {
+                                                            crate::jni_cache::set_open_file_method(method_id.into_raw());
+                                                            log::info!("JNI: Successfully cached openFileExternally method ID.");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        let svc_name_jstr = match env.new_string("com.chauhanpratham.telegramdrive.UploadForegroundService") {
+                                            Ok(s) => Some(s),
+                                            Err(e) => {
+                                                log::error!("JNI: Failed to create Service class name string: {}", e);
+                                                None
+                                            }
+                                        };
+                                        if let Some(svc_name_jstr) = svc_name_jstr {
+                                            if let Ok(svc_class_obj_val) = env.call_method(
+                                                &class_loader_obj,
+                                                "loadClass",
+                                                "(Ljava/lang/String;)Ljava/lang/Class;",
+                                                &[jni::objects::JValue::from(&svc_name_jstr)],
+                                            ) {
+                                                if let Ok(svc_class_obj) = svc_class_obj_val.l() {
+                                                    if let Ok(svc_class_global) = env.new_global_ref(&svc_class_obj) {
+                                                        let _ = crate::jni_cache::set_upload_service_class(svc_class_global);
+                                                        log::info!("JNI: Successfully cached UploadForegroundService class reference globally.");
+                                                        
+                                                        // Eagerly cache Service static method IDs
+                                                        let svc_class_val: jni::objects::JClass = (&svc_class_obj).into();
+                                                        if let Ok(method_id) = env.get_static_method_id(
+                                                            &svc_class_val,
+                                                            "startService",
+                                                            "(Landroid/content/Context;)V",
+                                                        ) {
+                                                            crate::jni_cache::set_start_service_method(method_id.into_raw());
+                                                            log::info!("JNI: Successfully cached startService method ID.");
+                                                        }
+                                                        if let Ok(method_id) = env.get_static_method_id(
+                                                            &svc_class_val,
+                                                            "stopService",
+                                                            "(Landroid/content/Context;)V",
+                                                        ) {
+                                                            crate::jni_cache::set_stop_service_method(method_id.into_raw());
+                                                            log::info!("JNI: Successfully cached stopService method ID.");
+                                                        }
                                                     }
                                                 }
                                             }
@@ -540,6 +702,9 @@ pub fn run() {
                 runner_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
                 peer_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
                 cancelled_transfers: Arc::new(tokio::sync::RwLock::new(HashSet::new())),
+                upload_limiter: Arc::new(std::sync::Mutex::new(commands::TokenBucket::new(2 * 1024 * 1024, 2 * 1024 * 1024))),
+                active_uploads: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                message_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             });
             app.manage(Arc::new(bandwidth::BandwidthManager::new(app.handle())));
             app.manage(StreamConfig { token: stream_token.clone(), port: STREAM_PORT });
@@ -679,19 +844,26 @@ pub fn run() {
             commands::cmd_log,
             commands::cmd_delete_file,
             commands::cmd_download_file,
+            commands::cmd_get_offline_dir,
+            commands::cmd_check_offline_file,
+            commands::cmd_delete_offline_file,
             commands::cmd_move_files,
             commands::cmd_create_folder,
             commands::cmd_delete_folder,
             commands::cmd_rename_folder,
             commands::cmd_rename_file,
             commands::cmd_get_bandwidth,
+            commands::cmd_get_total_files_size,
             commands::cmd_delete_preview_for_message,
             commands::cmd_get_preview,
+            commands::cmd_get_local_cache_path,
+            commands::cmd_clean_local_cache,
             commands::cmd_clean_preview_cache,
             commands::cmd_logout,
             commands::cmd_scan_folders,
             commands::cmd_search_global,
             commands::cmd_check_connection,
+            commands::cmd_get_me,
             commands::cmd_is_network_available,
             commands::cmd_test_proxy_traffic,
             commands::cmd_reconnect_with_network_settings,
@@ -711,6 +883,8 @@ pub fn run() {
             commands::cmd_get_proxy_status,
             commands::cmd_apply_vpn_settings,
             commands::cmd_get_network_config,
+            commands::cmd_file_exists,
+            commands::cmd_get_folder_participants,
             commands::cmd_check_latency,
             commands::cmd_detect_vpn,
             commands::cmd_create_share,
@@ -724,66 +898,57 @@ pub fn run() {
             cmd_get_system_diagnostics,
             commands::cmd_get_video_metadata,
             commands::cmd_get_video_metadata_batch,
-            transcode::cmd_get_transcode_capabilities,
-            transcode::cmd_prepare_transcoded_stream,
-            transcode::cmd_get_transcode_status,
-            transcode::cmd_cancel_transcode,
-            transcode::cmd_get_master_playlist_info,
-            transcode::cmd_get_transcode_cache_info,
-            transcode::cmd_set_transcode_cache_limit,
-            transcode::cmd_get_cached_variants,
-            transcode::cmd_get_detailed_transcode_cache,
-            transcode::cmd_clear_transcode_cache,
-            fmp4_remux::cmd_prepare_fmp4_stream,
-            fmp4_remux::cmd_get_fmp4_status,
             commands::cmd_list_archive_contents,
             commands::cmd_extract_archive_entry,
             commands::cmd_get_enriched_folders,
             commands::cmd_update_folder_order,
-            commands::cmd_create_group,
-            commands::cmd_update_group,
-            commands::cmd_delete_group,
-            commands::cmd_assign_folder_to_group,
-            commands::cmd_update_group_order,
-            commands::cmd_get_groups,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
-        if let tauri::RunEvent::Exit = event {
-            log::info!("Application exiting — shutting down background services...");
-
-            // 1. Shutdown the grammers network runner
-            let shutdown_arc = app_handle.state::<TelegramState>().runner_shutdown.clone();
-            let runner_tx = shutdown_arc.lock().ok().and_then(|mut g| g.take());
-            if let Some(tx) = runner_tx {
-                log::info!("Signaling network runner shutdown...");
-                let _ = tx.send(());
+        match event {
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                let active = app_handle.state::<TelegramState>().active_uploads.load(std::sync::atomic::Ordering::SeqCst);
+                if active > 0 {
+                    log::info!("ExitRequested intercepted: active_uploads is {}, preventing process exit", active);
+                    api.prevent_exit();
+                }
             }
+            tauri::RunEvent::Exit => {
+                log::info!("Application exiting — shutting down background services...");
 
-            // 2. Stop the Actix streaming server (graceful)
-            let server_arc = app_handle.state::<ActixServerHandle>().0.clone();
-            let server_handle = server_arc.lock().ok().and_then(|mut g| g.take());
-            if let Some(handle) = server_handle {
-                log::info!("Stopping Actix streaming server...");
-                drop(handle.stop(true));
-            }
+                // 1. Shutdown the grammers network runner
+                let shutdown_arc = app_handle.state::<TelegramState>().runner_shutdown.clone();
+                let runner_tx = shutdown_arc.lock().ok().and_then(|mut g| g.take());
+                if let Some(tx) = runner_tx {
+                    log::info!("Signaling network runner shutdown...");
+                    let _ = tx.send(());
+                }
 
-            // 3. Stop the API server (graceful)
-            let api_arc = app_handle.state::<ApiServerHandle>().0.clone();
-            let api_handle = api_arc.lock().ok().and_then(|mut g| g.take());
-            if let Some(handle) = api_handle {
-                log::info!("Stopping API server...");
-                drop(handle.stop(true));
-            }
+                // 2. Stop the Actix streaming server (graceful)
+                let server_arc = app_handle.state::<ActixServerHandle>().0.clone();
+                let server_handle = server_arc.lock().ok().and_then(|mut g| g.take());
+                if let Some(handle) = server_handle {
+                    log::info!("Stopping Actix streaming server...");
+                    drop(handle.stop(true));
+                }
 
-            // 4. Stop local SOCKS5 proxy bridge (if running)
-            if let Some(net_config) = app_handle.try_state::<Arc<vpn_optimizer::NetworkConfig>>() {
-                log::info!("Stopping SOCKS5 bridge...");
-                net_config.stop_http_bridge();
+                // 3. Stop the API server (graceful)
+                let api_arc = app_handle.state::<ApiServerHandle>().0.clone();
+                let api_handle = api_arc.lock().ok().and_then(|mut g| g.take());
+                if let Some(handle) = api_handle {
+                    log::info!("Stopping API server...");
+                    drop(handle.stop(true));
+                }
+
+                // 4. Stop local SOCKS5 proxy bridge (if running)
+                if let Some(net_config) = app_handle.try_state::<Arc<vpn_optimizer::NetworkConfig>>() {
+                    log::info!("Stopping SOCKS5 bridge...");
+                    net_config.stop_http_bridge();
+                }
             }
+            _ => {}
         }
     });
 }
-

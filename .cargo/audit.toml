@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+    "RUSTSEC-2026-0194", # quick-xml quadratic runtime (DoS) - build-time only inside wayland-scanner
+    "RUSTSEC-2026-0195"  # quick-xml unbounded namespace allocation (DoS) - build-time only inside wayland-scanner
+]

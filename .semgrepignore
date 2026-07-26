@@ -1,0 +1,24 @@
+# Ignore dependencies
+node_modules/
+**/node_modules/
+target/
+**/target/
+
+# Ignore build artifacts
+dist/
+**/dist/
+build/
+**/build/
+
+# Ignore mock files (debug consoles and test simulated objects)
+**/mocks/
+app/src/mocks/
+
+# Ignore static assets
+public/
+**/public/
+
+# Ignore lockfiles and configurations
+package-lock.json
+Cargo.lock
+.git/

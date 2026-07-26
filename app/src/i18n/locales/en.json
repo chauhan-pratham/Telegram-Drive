@@ -60,7 +60,17 @@
     "theme_color": "Theme Color",
     "delete_group": "Delete Group",
     "enter_group_name": "Enter group name...",
-    "hide_groups_desc": "Toggle folder groups display in the sidebar"
+    "hide_groups_desc": "Toggle folder groups display in the sidebar",
+    "empty_my_drive_title": "This folder is empty",
+    "empty_my_drive_desc": "Drag and drop files here, or click the button below to upload from your computer.",
+    "empty_starred_title": "No starred files",
+    "empty_starred_desc": "Mark important files with a star to find them easily later.",
+    "empty_recent_title": "No recent files",
+    "empty_recent_desc": "Files you've recently uploaded or viewed will show up here.",
+    "empty_shared_title": "No shared files",
+    "empty_shared_desc": "Files shared with you by other users or Telegram channels will show up here.",
+    "empty_trash_title": "Trash is empty",
+    "empty_trash_desc": "Files you delete will be moved here and kept until you empty the trash."
   },
   "settings": {
     "title": "Settings",
@@ -218,6 +228,7 @@
     "load_shares_failed": "Failed to load shares: {{error}}",
     "revoke_link_title": "Revoke Shareable Link",
     "revoke_link_desc": "Are you sure you want to revoke this link? Anyone using it will no longer be able to download the file.",
+    "revoke": "Revoke",
     "link_revoked": "Shareable link revoked",
     "link_revoke_failed": "Failed to revoke link: {{error}}",
     "port_range_error": "Port must be between 1024 and 65535",

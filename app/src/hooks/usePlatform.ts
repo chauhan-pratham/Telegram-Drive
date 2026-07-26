@@ -9,29 +9,34 @@ export function usePlatform() {
   });
 
   useEffect(() => {
-    try {
-      const osType = type();
-      const isAndroid = osType === 'android';
-      const isIos = osType === 'ios';
-      const isMobile = isAndroid || isIos;
+    const updatePlatform = () => {
+      let isAndroid = false;
+      let isMobile = false;
+
+      try {
+        const osType = type();
+        isAndroid = osType === 'android';
+        const isIos = osType === 'ios';
+        isMobile = isAndroid || isIos;
+      } catch (e) {
+        const ua = navigator.userAgent.toLowerCase();
+        isAndroid = ua.includes('android');
+        isMobile = isAndroid || ua.includes('iphone') || ua.includes('ipad');
+      }
+
+      // Also switch to mobile dashboard preview when window width is under 768px on PC
+      const isNarrowScreen = window.innerWidth < 768;
 
       setPlatformInfo({
-        isMobile,
-        isDesktop: !isMobile,
+        isMobile: isMobile || isNarrowScreen,
+        isDesktop: !isMobile && !isNarrowScreen,
         isAndroid,
       });
-    } catch (e) {
-      // Fallback for browser/development environments
-      const ua = navigator.userAgent.toLowerCase();
-      const isAndroid = ua.includes('android');
-      const isMobile = isAndroid || ua.includes('iphone') || ua.includes('ipad');
+    };
 
-      setPlatformInfo({
-        isMobile,
-        isDesktop: !isMobile,
-        isAndroid,
-      });
-    }
+    updatePlatform();
+    window.addEventListener('resize', updatePlatform);
+    return () => window.removeEventListener('resize', updatePlatform);
   }, []);
 
   return platformInfo;

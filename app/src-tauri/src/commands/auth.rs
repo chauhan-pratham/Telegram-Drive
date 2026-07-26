@@ -77,7 +77,14 @@ pub async fn ensure_client_initialized(
     let session_path_str = session_path.to_string_lossy().to_string();
     log::info!("Opening session at: {}", session_path_str);
     
-    let mut session_open_result = SqliteSession::open(&session_path_str);
+    // Ensure database file is configured for WAL mode before opening to prevent locking crashes
+    if session_path.exists() {
+        if let Ok(conn) = rusqlite::Connection::open(&session_path_str) {
+            let _ = conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+        }
+    }
+    
+    let mut session_open_result = SqliteSession::open(&session_path_str).await;
     
     // Retry opening the session database up to 5 times (every 100ms)
     // in case the database is temporarily locked by the old shutting down runner.
@@ -85,7 +92,7 @@ pub async fn ensure_client_initialized(
         for attempt in 1..=5 {
             log::warn!("Failed to open session on attempt {} (database may be locked). Retrying in 100ms...", attempt);
             tokio::time::sleep(Duration::from_millis(100)).await;
-            session_open_result = SqliteSession::open(&session_path_str);
+            session_open_result = SqliteSession::open(&session_path_str).await;
             if session_open_result.is_ok() {
                 break;
             }
@@ -100,10 +107,20 @@ pub async fn ensure_client_initialized(
             let _ = std::fs::remove_file(format!("{}-wal", session_path_str));
             let _ = std::fs::remove_file(format!("{}-shm", session_path_str));
             
-            SqliteSession::open(&session_path_str)
-                .map_err(|err| format!("Failed to open session after recreation: {}", err))?
+            let s = SqliteSession::open(&session_path_str).await
+                .map_err(|err| format!("Failed to open session after recreation: {}", err))?;
+            
+            if let Ok(conn) = rusqlite::Connection::open(&session_path_str) {
+                let _ = conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+            }
+            s
         }
     };
+    
+    // Ensure WAL mode and busy timeout are persisted on the opened database
+    if let Ok(conn) = rusqlite::Connection::open(&session_path_str) {
+        let _ = conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+    }
         
     let net_config = app_handle.state::<Arc<crate::vpn_optimizer::NetworkConfig>>();
     let preferred_dc = {
@@ -117,7 +134,7 @@ pub async fn ensure_client_initialized(
     if preferred_dc.starts_with("dc") && preferred_dc.len() > 2 {
         if let Ok(dc_id) = preferred_dc[2..].parse::<i32>() {
             log::info!("Setting preferred home DC ID: {}", dc_id);
-            session.set_home_dc_id(dc_id);
+            let _ = session.set_home_dc_id(dc_id).await;
         }
     }
 
@@ -129,7 +146,7 @@ pub async fn ensure_client_initialized(
 
     let session = Arc::new(session);
     let pool = SenderPool::with_configuration(session, api_id, connection_params);
-    let client = Client::new(&pool);
+    let client = Client::new(pool.handle.clone());
     
     // Create shutdown channel for this runner
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -171,36 +188,42 @@ pub async fn cmd_check_connection(
     app_handle: tauri::AppHandle,
     state: State<'_, TelegramState>,
 ) -> Result<bool, String> {
-    // 1. Check if client exists and is responsive
+    // 1. Check if client exists and is authorized
     let client_msg_opt = {
         let guard = state.client.lock().await;
         guard.as_ref().cloned()
     };
 
     if let Some(client) = client_msg_opt {
-        // Ping (e.g., get_me)
-        if client.get_me().await.is_ok() {
-            return Ok(true);
+        match client.is_authorized().await {
+            Ok(true) => {
+                log::info!("Connection check: client is authorized.");
+                return Ok(true);
+            }
+            Ok(false) => {
+                log::warn!("Connection check: client is not authorized.");
+                return Ok(false);
+            }
+            Err(e) => {
+                log::warn!("Connection check: authorization query failed ({}). Network might be offline.", e);
+                return Ok(false);
+            }
         }
-        log::warn!("Connection check failed (get_me). Attempting reconnect...");
     } else {
          log::warn!("Connection check: No client found. Checking for saved API ID...");
     }
 
-    // 2. Reconnect Logic
+    // 2. Reconnect Logic (only if client doesn't exist)
     let api_id_opt = *state.api_id.lock().await;
     if let Some(api_id) = api_id_opt {
-        // Force re-init: Clear old client first to ensure fresh pool
-        *state.client.lock().await = None;
-        
         match ensure_client_initialized(&app_handle, &state, api_id).await {
             Ok(c) => {
-                // Double check
-                if c.get_me().await.is_ok() {
-                    log::info!("Auto-reconnect successful.");
-                    return Ok(true);
-                } else {
-                    return Err("Reconnect succeeded but ping failed.".to_string());
+                match c.is_authorized().await {
+                    Ok(true) => {
+                        log::info!("Auto-reconnect successful.");
+                        return Ok(true);
+                    }
+                    _ => return Ok(false)
                 }
             },
             Err(e) => return Err(format!("Auto-reconnect failed: {}", e))
@@ -208,6 +231,118 @@ pub async fn cmd_check_connection(
     }
 
     Ok(false) // Not connected and no credentials to reconnect
+}
+
+#[derive(serde::Serialize)]
+pub struct TelegramUser {
+    pub id: i64,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub username: Option<String>,
+    pub photo_base64: Option<String>,
+}
+
+#[tauri::command]
+pub async fn cmd_get_me(
+    state: State<'_, TelegramState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Option<TelegramUser>, String> {
+    let client_opt = {
+        let guard = state.client.lock().await;
+        guard.as_ref().cloned()
+    };
+
+    if let Some(client) = client_opt {
+        match client.get_me().await {
+            Ok(me) => {
+                let (first_name, last_name, username, _) = match &me.raw {
+                    tl::enums::User::User(usr) => {
+                        let first = usr.first_name.clone().unwrap_or_else(|| "User".to_string());
+                        (
+                            first,
+                            usr.last_name.clone(),
+                            usr.username.clone(),
+                            usr.photo.clone(),
+                        )
+                    }
+                    tl::enums::User::Empty(_) => (
+                        "User".to_string(),
+                        None,
+                        None,
+                        None,
+                    ),
+                };
+
+                let mut photo_base64 = None;
+                let peer = grammers_client::peer::Peer::User(me.clone());
+                if let Ok(Some(chat_photo)) = peer.photo(false).await {
+                    let photo_id = match &chat_photo.raw {
+                        tl::enums::InputFileLocation::InputPeerPhotoFileLocation(loc) => loc.photo_id,
+                        _ => 0,
+                    };
+                    
+                    if let Ok(cache_dir) = app_handle.path().app_cache_dir() {
+                        let _ = std::fs::create_dir_all(&cache_dir);
+                        let user_id = me.raw.id();
+                        let file_name = format!("profile_photo_{}_{}.jpg", user_id, photo_id);
+                        let file_path = cache_dir.join(&file_name);
+                        
+                        let download_ok = if file_path.exists() {
+                            true
+                        } else {
+                            // Clean up old cached profile photos for this user
+                            if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+                                for entry in entries.flatten() {
+                                    let path = entry.path();
+                                    if path.is_file() {
+                                        if let Some(name_str) = path.file_name().and_then(|n| n.to_str()) {
+                                            if name_str.starts_with(&format!("profile_photo_{}_", user_id)) && name_str.ends_with(".jpg") && name_str != file_name {
+                                                let _ = std::fs::remove_file(path);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Ok(mut file) = std::fs::File::create(&file_path) {
+                                let mut download_iter = client.iter_download(&chat_photo);
+                                download_iter = download_iter.chunk_size(65536);
+                                let mut ok = true;
+                                while let Some(chunk) = download_iter.next().await.ok().flatten() {
+                                    use std::io::Write;
+                                    if file.write_all(&chunk).is_err() {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                ok
+                            } else {
+                                false
+                            }
+                        };
+                        
+                        if download_ok {
+                            if let Ok(bytes) = std::fs::read(&file_path) {
+                                let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+                                photo_base64 = Some(format!("data:image/jpeg;base64,{}", b64));
+                            }
+                        }
+                    }
+                }
+
+                Ok(Some(TelegramUser {
+                    id: me.raw.id(),
+                    first_name,
+                    last_name,
+                    username,
+                    photo_base64,
+                }))
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 #[tauri::command]
@@ -282,6 +417,7 @@ pub async fn cmd_logout(
     *state.api_id.lock().await = None;
     crate::commands::utils::clear_peer_cache(&state.peer_cache).await;
     state.cancelled_transfers.write().await.clear();
+    state.message_cache.write().await.clear();
 
     // 4. Remove Session File
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;

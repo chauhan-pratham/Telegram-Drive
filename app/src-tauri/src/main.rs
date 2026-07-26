@@ -69,3 +69,4 @@ fn main() {
 
     app_lib::run()
 }
+// Force rebuild with updated icon resources.

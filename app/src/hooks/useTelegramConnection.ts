@@ -1,18 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { load, type Store } from '@tauri-apps/plugin-store';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useConfirm } from '../context/ConfirmContext';
-import { TelegramFolder, FolderInviteInfo, FolderGroup } from '../types';
+import { TelegramFolder, FolderInviteInfo } from '../types';
 import { useNetworkStatus } from './useNetworkStatus';
+import { useDrive } from '../context/DriveContext';
 
 export function useTelegramConnection(onLogoutParent: () => void) {
+    const AUTO_FOLDER_SYNC_INTERVAL_MS = 30 * 60 * 1000;
     const queryClient = useQueryClient();
     const { confirm } = useConfirm();
 
-    const [folders, setFolders] = useState<TelegramFolder[]>([]);
-    const [groups, setGroups] = useState<FolderGroup[]>([]);
+    const { folders, setFolders } = useDrive();
+    const [mutatingFolderIds, setMutatingFolderIds] = useState<Set<number>>(new Set());
     const [activeFolderId, setActiveFolderId] = useState<number | null>(null);
     const [store, setStore] = useState<Store | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
@@ -21,15 +23,6 @@ export function useTelegramConnection(onLogoutParent: () => void) {
     const networkIsOnline = useNetworkStatus();
     const handleSyncFoldersRef = useRef<((silentParam?: boolean | unknown) => Promise<void>) | null>(null);
 
-    // Fetch groups list from DB
-    const fetchGroups = useCallback(async () => {
-        try {
-            const list = await invoke<FolderGroup[]>('cmd_get_groups');
-            setGroups(list);
-        } catch (e) {
-            console.error("Failed to fetch folder groups:", e);
-        }
-    }, []);
 
     // Load persisted store and restore saved folders.
     useEffect(() => {
@@ -56,14 +49,6 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                     if (savedFolders) setFolders(savedFolders);
                 }
 
-                // Fetch local-first SQLite groups
-                try {
-                    const list = await invoke<FolderGroup[]>('cmd_get_groups');
-                    setGroups(list);
-                } catch (e) {
-                    console.error("Failed to load groups:", e);
-                }
-
                 const savedActiveFolderId = await _store.get<number | null>('activeFolderId');
                 if (savedActiveFolderId !== undefined) setActiveFolderId(savedActiveFolderId);
 
@@ -82,6 +67,10 @@ export function useTelegramConnection(onLogoutParent: () => void) {
 
         const syncAndRefresh = async () => {
             if (!handleSyncFoldersRef.current) return;
+            const lastSyncAt = await store.get<number>('lastFolderSyncAt') ?? 0;
+            if (Date.now() - lastSyncAt < AUTO_FOLDER_SYNC_INTERVAL_MS) {
+                return;
+            }
             await handleSyncFoldersRef.current(true);
             queryClient.invalidateQueries({ queryKey: ['files'] });
         };
@@ -129,12 +118,31 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         setIsSyncing(true);
         try {
             const foundFolders = await invoke<TelegramFolder[]>('cmd_scan_folders');
+
+            // Clean up localStorage shared list for folders that are either no longer shared or no longer exist
+            const savedSharedStr = localStorage.getItem('shared_folder_ids');
+            if (savedSharedStr) {
+                let sharedIds: number[] = JSON.parse(savedSharedStr);
+                const originalCount = sharedIds.length;
+                sharedIds = sharedIds.filter(id => {
+                    const matchedFolder = foundFolders.find(f => f.id === id);
+                    if (!matchedFolder) return false; // Folder no longer exists in Telegram scan
+                    if (matchedFolder.participants_count !== undefined && matchedFolder.participants_count !== null && matchedFolder.participants_count <= 1) {
+                        return false; // Only owner is left
+                    }
+                    return true;
+                });
+                if (sharedIds.length !== originalCount) {
+                    localStorage.setItem('shared_folder_ids', JSON.stringify(sharedIds));
+                }
+            }
+
             setFolders(foundFolders);
             await store.set('folders', foundFolders);
+            await store.set('lastFolderSyncAt', Date.now());
             await store.save();
-            await fetchGroups();
             if (!silent) {
-                toast.success("Folders and groups synchronized.");
+                toast.success("Folders synchronized.");
             }
         } catch (e) {
             if (!silent) {
@@ -147,6 +155,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
 
     // Keep the ref in sync
     handleSyncFoldersRef.current = handleSyncFolders;
+
+    const handleSetActiveFolderId = async (id: number | null) => {
+        setActiveFolderId(id);
+        if (store) {
+            await store.set('activeFolderId', id);
+            await store.save();
+        }
+    };
 
     const handleCreateFolder = async (name: string) => {
         if (!store) return;
@@ -163,8 +179,8 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     };
 
-    const handleFolderDelete = async (folderId: number, folderName: string) => {
-        if (!await confirm({
+    const handleFolderDelete = async (folderId: number, folderName: string, bypassConfirm = false) => {
+        if (!bypassConfirm && !await confirm({
             title: "Delete Folder",
             message: `Are you sure you want to delete "${folderName}"?\nThis will delete the channel on Telegram.`,
             confirmText: "Delete",
@@ -172,7 +188,20 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         })) return;
 
         try {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.add(folderId);
+                return next;
+            });
             await invoke('cmd_delete_folder', { folderId });
+            
+            const savedSharedStr = localStorage.getItem('shared_folder_ids');
+            if (savedSharedStr) {
+                const sharedIds: number[] = JSON.parse(savedSharedStr);
+                const updatedSharedIds = sharedIds.filter(id => id !== folderId);
+                localStorage.setItem('shared_folder_ids', JSON.stringify(updatedSharedIds));
+            }
+
             const updated = folders.filter(f => f.id !== folderId);
             setFolders(updated);
             if (store) {
@@ -201,6 +230,12 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             } else {
                 toast.error(`Failed to delete folder: ${e}`);
             }
+        } finally {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
         }
     };
 
@@ -209,6 +244,11 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         if (!newName || newName === oldName) return;
 
         try {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.add(folderId);
+                return next;
+            });
             await invoke('cmd_rename_folder', { folderId, newName });
             const updated = folders.map(f => f.id === folderId ? { ...f, name: newName } : f);
             setFolders(updated);
@@ -219,6 +259,12 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             toast.success(`Folder renamed to "${newName}".`);
         } catch (e) {
             toast.error("Failed to rename folder: " + e);
+        } finally {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
         }
     };
 
@@ -228,6 +274,14 @@ export function useTelegramConnection(onLogoutParent: () => void) {
                 title: "Make Private",
                 message: "Making this channel private will remove its public username. Any shared t.me links will stop working immediately.",
                 confirmText: "Make Private",
+                variant: 'danger'
+            });
+            if (!confirmed) return;
+        } else {
+            const confirmed = await confirm({
+                title: "Make Folder Public?",
+                message: "WARNING: Making this folder public will assign it a public username. Anyone on Telegram can find and download all files in this folder. Are you sure you want to proceed?",
+                confirmText: "Make Public",
                 variant: 'danger'
             });
             if (!confirmed) return;
@@ -259,60 +313,33 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             const info = await invoke<FolderInviteInfo>('cmd_export_folder_invite', {
                 folderId,
             });
+
+            const savedSharedStr = localStorage.getItem('shared_folder_ids');
+            const sharedIds: number[] = savedSharedStr ? JSON.parse(savedSharedStr) : [];
+            if (!sharedIds.includes(folderId)) {
+                sharedIds.push(folderId);
+                localStorage.setItem('shared_folder_ids', JSON.stringify(sharedIds));
+            }
+
+            const updated = folders.map(f => {
+                if (f.id === folderId) {
+                    return {
+                        ...f,
+                        is_public: info.is_public,
+                        username: info.username || f.username,
+                    };
+                }
+                return f;
+            });
+            setFolders(updated);
+            if (store) {
+                await store.set('folders', updated);
+                await store.save();
+            }
             return info;
         } catch (e) {
             toast.error(`Failed to get invite link: ${e}`);
             throw e;
-        }
-    };
-
-    const handleSetActiveFolderId = async (id: number | null) => {
-        setActiveFolderId(id);
-        if (store) {
-            await store.set('activeFolderId', id);
-            await store.save();
-        }
-    };
-
-    // Group Management Actions
-    const handleCreateGroup = async (name: string, colorHex: string = '#3B82F6') => {
-        try {
-            const id = await invoke<number>('cmd_create_group', { name, colorHex });
-            const newGroup: FolderGroup = { id, name, color_hex: colorHex, display_order: groups.length };
-            setGroups(prev => [...prev, newGroup]);
-            toast.success(`Group "${name}" created.`);
-        } catch (e) {
-            toast.error("Failed to create group: " + e);
-        }
-    };
-
-    const handleDeleteGroup = async (groupId: number) => {
-        try {
-            await invoke('cmd_delete_group', { groupId });
-            setGroups(prev => prev.filter(g => g.id !== groupId));
-            setFolders(prev => prev.map(f => f.group_id === groupId ? { ...f, group_id: null } : f));
-            toast.success("Group deleted.");
-        } catch (e) {
-            toast.error("Failed to delete group: " + e);
-        }
-    };
-
-    const handleUpdateGroup = async (groupId: number, name: string, colorHex: string) => {
-        try {
-            await invoke('cmd_update_group', { groupId, name, colorHex });
-            setGroups(prev => prev.map(g => g.id === groupId ? { ...g, name, color_hex: colorHex } : g));
-            toast.success("Group updated.");
-        } catch (e) {
-            toast.error("Failed to update group: " + e);
-        }
-    };
-
-    const handleAssignFolderToGroup = async (folderId: number, groupId: number | null) => {
-        try {
-            await invoke('cmd_assign_folder_to_group', { channelId: folderId, groupId });
-            setFolders(prev => prev.map(f => f.id === folderId ? { ...f, group_id: groupId } : f));
-        } catch (e) {
-            toast.error("Failed to assign folder to group: " + e);
         }
     };
 
@@ -333,23 +360,100 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     };
 
-    const handleUpdateGroupOrder = async (reorderedGroups: FolderGroup[]) => {
-        setGroups(reorderedGroups);
-        try {
-            await Promise.all(
-                reorderedGroups.map((g, index) =>
-                    invoke('cmd_update_group_order', { groupId: g.id, newOrder: index })
-                )
-            );
-        } catch (e) {
-            console.error("Failed to persist group order:", e);
+    const enrichedFolders = useMemo(() => {
+        const savedSharedStr = localStorage.getItem('shared_folder_ids');
+        const sharedIds: number[] = savedSharedStr ? JSON.parse(savedSharedStr) : [];
+        return folders.map(f => {
+            const isSharedWithMe = f.is_owned === false;
+            
+            // If we have an explicit participant count, let it dominate:
+            // if participants_count <= 1, then it's NOT shared by members (only the owner is in the channel).
+            // otherwise, we check if participants_count > 1, or fall back to sharedIds registry.
+            const isSharedByMembers = f.participants_count !== undefined && f.participants_count !== null
+                ? f.participants_count > 1
+                : sharedIds.includes(f.id);
+
+            return {
+                ...f,
+                is_shared_with_me: isSharedWithMe,
+                is_shared: f.is_public || !!f.username || isSharedWithMe || isSharedByMembers,
+            };
+        });
+    }, [folders]);
+
+    // Background refresh of participant counts when at the root folder level
+    useEffect(() => {
+        let active = true;
+        if (folders.length > 0 && isConnected && activeFolderId === null) {
+            const checkParticipants = async () => {
+                for (const folder of folders) {
+                    if (!active) return;
+                    if (folder.id === -999) continue;
+                    try {
+                        const participants = await invoke<any[]>('cmd_get_folder_participants', { folderId: folder.id });
+                        if (!active) return;
+                        const liveCount = participants.length;
+                        
+                        setFolders(prev => prev.map(f => {
+                            if (f.id === folder.id) {
+                                if (f.participants_count !== liveCount) {
+                                    return { ...f, participants_count: liveCount };
+                                }
+                            }
+                            return f;
+                        }));
+
+                        const hasJoinedMembers = participants.some(p => !p.is_creator);
+                        const savedSharedStr = localStorage.getItem('shared_folder_ids');
+                        let sharedIds: number[] = savedSharedStr ? JSON.parse(savedSharedStr) : [];
+                        
+                        if (hasJoinedMembers) {
+                            if (!sharedIds.includes(folder.id)) {
+                                sharedIds.push(folder.id);
+                                localStorage.setItem('shared_folder_ids', JSON.stringify(sharedIds));
+                            }
+                        } else {
+                            if (sharedIds.includes(folder.id)) {
+                                sharedIds = sharedIds.filter(id => id !== folder.id);
+                                localStorage.setItem('shared_folder_ids', JSON.stringify(sharedIds));
+                            }
+                        }
+                    } catch (e) {
+                        const errStr = String(e);
+                        // If client is not connected yet, schedule a retry after 2.5 seconds
+                        if (errStr.includes("NOT_CONNECTED") || errStr.includes("not connected")) {
+                            setTimeout(() => {
+                                if (active) checkParticipants();
+                            }, 2500);
+                            return;
+                        }
+                        
+                        console.error("Failed to refresh participants for folder", folder.id, e);
+                        
+                        // If it fails with access errors (meaning user left/removed from channel), clean it up from localStorage
+                        if (errStr.includes("CHANNEL_PUBLIC_GROUP_NA") || errStr.includes("CHANNEL_PRIVATE") || errStr.includes("not found") || errStr.includes("NotFound") || errStr.includes("ChatNotFound")) {
+                            const savedSharedStr = localStorage.getItem('shared_folder_ids');
+                            if (savedSharedStr) {
+                                let sharedIds: number[] = JSON.parse(savedSharedStr);
+                                if (sharedIds.includes(folder.id)) {
+                                    sharedIds = sharedIds.filter(id => id !== folder.id);
+                                    localStorage.setItem('shared_folder_ids', JSON.stringify(sharedIds));
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+            checkParticipants();
         }
-    };
+        return () => {
+            active = false;
+        };
+    }, [folders.length, isConnected, activeFolderId]);
 
     return {
         store,
-        folders,
-        groups,
+        folders: enrichedFolders,
         activeFolderId,
         setActiveFolderId: handleSetActiveFolderId,
         isSyncing,
@@ -361,13 +465,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         handleFolderRename,
         handleFolderToggleVisibility,
         handleExportFolderInvite,
-        // Group Actions
-        handleCreateGroup,
-        handleDeleteGroup,
-        handleUpdateGroup,
-        handleAssignFolderToGroup,
         handleReorderFolders,
-        handleUpdateGroupOrder,
-        fetchGroups
+        mutatingFolderIds,
     };
 }

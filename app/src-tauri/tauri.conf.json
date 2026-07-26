@@ -12,7 +12,7 @@
     }
   },
   "productName": "Telegram Drive",
-  "version": "1.9.9",
+  "version": "2.0.0",
   "identifier": "com.chauhanpratham.telegramdrive",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,14 +26,14 @@
         "title": "Telegram Drive",
         "width": 1200,
         "height": 800,
-        "minWidth": 1000,
-        "minHeight": 700,
+        "minWidth": 360,
+        "minHeight": 600,
         "dragDropEnabled": false,
         "devtools": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: http://localhost:* https://asset.localhost http://asset.localhost; media-src 'self' blob: http://localhost:*; img-src 'self' data: blob: asset: https: https://asset.localhost; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; frame-src 'self' blob:; worker-src 'self' blob:;",
+      "csp": "default-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:* https://asset.localhost http://asset.localhost; media-src 'self' blob: http://localhost:* http://127.0.0.1:* https://asset.localhost http://asset.localhost asset:; img-src 'self' data: blob: asset: https: http: https://asset.localhost http://asset.localhost asset:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; frame-src 'self' blob:; worker-src 'self' blob:;",
       "capabilities": [
         "default",
         "mobile-only"
@@ -42,7 +42,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "msi", "dmg", "appimage", "deb"],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

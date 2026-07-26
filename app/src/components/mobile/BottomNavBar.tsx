@@ -1,38 +1,40 @@
-import { Folder, Download, Settings } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Home, Star, Users, Folder } from 'lucide-react';
+
+export type MobileTab = 'home' | 'starred' | 'shared' | 'files';
 
 interface BottomNavBarProps {
-  activeTab: 'files' | 'downloads' | 'settings';
-  setActiveTab: (tab: 'files' | 'downloads' | 'settings') => void;
+  activeTab: MobileTab;
+  setActiveTab: (tab: MobileTab) => void;
   isAndroid?: boolean;
 }
 
-export function BottomNavBar({ activeTab, setActiveTab, isAndroid }: BottomNavBarProps) {
-  const { t } = useTranslation();
+export function BottomNavBar({ activeTab, setActiveTab }: BottomNavBarProps) {
 
   const tabs = [
-    { id: 'files', labelKey: 'common.files', icon: Folder },
-    { id: 'downloads', labelKey: 'common.transfers', icon: Download },
-    { id: 'settings', labelKey: 'common.settings', icon: Settings },
+    { id: 'home', label: 'Home', icon: Home },
+    { id: 'starred', label: 'Starred', icon: Star },
+    { id: 'shared', label: 'Shared', icon: Users },
+    { id: 'files', label: 'Files', icon: Folder },
   ] as const;
 
   return (
-    <nav className={`fixed left-4 right-4 bg-telegram-bg/85 backdrop-blur-xl border border-telegram-border/50 rounded-2xl shadow-2xl flex justify-around py-3 z-50 transition-all duration-300 ${isAndroid ? 'bottom-20' : 'bottom-5'}`}>
-      {tabs.map(({ id, labelKey, icon: Icon }) => {
+    <nav className="fixed bottom-0 left-0 right-0 bg-telegram-bg/95 backdrop-blur-2xl border-t border-telegram-border/30 shadow-2xl flex justify-around items-center py-2 px-2 z-50 transition-all duration-300">
+      {tabs.map(({ id, label, icon: Icon }) => {
         const isActive = activeTab === id;
         return (
           <button
             key={id}
-            onClick={() => setActiveTab(id)}
-            className={`flex flex-col items-center gap-1 transition-all duration-300 relative ${
-              isActive ? 'text-telegram-primary scale-110' : 'text-telegram-subtext hover:text-telegram-text'
+            onClick={() => setActiveTab(id as MobileTab)}
+            className={`flex flex-col items-center justify-center py-1 px-3 rounded-full transition-all duration-200 cursor-pointer ${
+              isActive ? 'text-telegram-primary font-bold' : 'text-telegram-subtext hover:text-telegram-text font-normal'
             }`}
           >
-            <Icon className="w-5 h-5" />
-            <span className="text-[10px] font-bold tracking-wide uppercase">{t(labelKey)}</span>
-            {isActive && (
-              <span className="absolute -bottom-1 w-1.5 h-1.5 bg-telegram-primary rounded-full shadow-[0_0_8px_var(--telegram-primary)]" />
-            )}
+            <div className={`px-4 py-1.5 rounded-full transition-all flex items-center justify-center ${isActive ? 'bg-telegram-primary/25 scale-105' : ''}`}>
+              <Icon className={`w-5 h-5 ${isActive && id === 'starred' ? 'fill-telegram-primary' : ''}`} />
+            </div>
+            <span className="text-[11px] mt-1 tracking-tight">
+              {label}
+            </span>
           </button>
         );
       })}

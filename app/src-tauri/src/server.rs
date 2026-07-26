@@ -2,13 +2,10 @@ use actix_web::{get, web, App, HttpServer, HttpResponse, Responder};
 use actix_cors::Cors;
 use crate::commands::TelegramState;
 use crate::commands::utils::resolve_peer;
-use grammers_client::types::Media;
+use grammers_client::media::Media;
 use crate::transcode::TranscodeManager;
-
 use std::net::TcpListener;
 use std::sync::Arc;
-
-
 
 /// Holds the per-session streaming token for Actix validation
 pub struct StreamTokenData {
@@ -60,7 +57,7 @@ pub fn build_media_response(
     extras: StreamingExtras,
 ) -> HttpResponse {
     let size = match media {
-        Media::Document(d) => d.size() as u64,
+        Media::Document(d) => d.size().unwrap_or(0) as u64,
         Media::Photo(_) => 0,
         _ => 0,
     };
@@ -88,59 +85,22 @@ pub fn build_media_response(
         size
     };
 
-    // Chunk alignment for Telegram's upload.getFile offset requirement.
-    //
-    // CRITICAL: Without the `precise` flag (which grammers-client does not
-    // expose), Telegram may route the request through a CDN that rounds the
-    // offset down to a CDN chunk boundary (commonly 512 KB = 524288 bytes).
-    // If our requested offset is not aligned to this boundary, the CDN
-    // silently returns data starting from the rounded-down position.
-    //
-    // Example: requesting offset 111935488 (213.48 × 512 KB) gets rounded
-    // to 111673344 (213 × 512 KB), introducing a 262 KB shift. This
-    // misalignment accumulates across successive Range requests and
-    // eventually corrupts the MP4 box parsing (triggering the "ORrI" error).
-    //
-    // Fix: always align to 512 KB boundaries, then slice off the leading
-    // bytes to serve the exact byte range the client requested.
     let mut download_iter = client.iter_download(media);
     let mut bytes_to_skip: usize = 0;
 
     if start_byte > 0 {
-        /// MTProto chunk size (must be divisible by grammers' MIN_CHUNK_SIZE).
-        /// 65536 is safe — it is the default and widely tested.
         const CHUNK_SIZE: i32 = 65536;
-        /// Telegram CDN alignment boundary. 512 KB is the largest observed
-        /// CDN chunk size; aligning to this boundary prevents ANY rounding.
         const CDN_ALIGNMENT: u64 = 524288; // 512 KB
 
-        // 1) Round the requested start down to a CDN-safe boundary.
         let cdn_aligned_start = (start_byte / CDN_ALIGNMENT) * CDN_ALIGNMENT;
-
-        // 2) Compute how many 64 KB chunks to skip to reach that boundary.
         let chunk_index = (cdn_aligned_start / CHUNK_SIZE as u64) as i32;
 
-        // Always set chunk size for predictable download behaviour.
         download_iter = download_iter.chunk_size(CHUNK_SIZE);
         if chunk_index > 0 {
             download_iter = download_iter.skip_chunks(chunk_index);
         }
 
-        // 3) Leading bytes between the CDN-aligned offset and the client's
-        //    actual requested start must be discarded.
         bytes_to_skip = (start_byte - cdn_aligned_start) as usize;
-
-        // Safety: cdn_aligned_start ≤ start_byte by construction.
-        debug_assert!(
-            cdn_aligned_start <= start_byte,
-            "CDN alignment invariant violated: aligned {} > requested {}",
-            cdn_aligned_start, start_byte
-        );
-
-        log::debug!(
-            "Range alignment: requested={}, cdn_aligned={}, chunk_index={}, bytes_to_skip={}",
-            start_byte, cdn_aligned_start, chunk_index, bytes_to_skip,
-        );
     }
 
     let label = extras.log_label;
@@ -182,6 +142,9 @@ pub fn build_media_response(
                 }
                 Err(e) => {
                     log::error!("{} stream error: {}", label, e);
+                    yield Err::<web::Bytes, _>(actix_web::error::ErrorBadGateway(format!(
+                        "{} download failed: {}", label, e
+                    )));
                     break;
                 }
             }
@@ -217,8 +180,6 @@ pub fn build_media_response(
     resp.streaming(stream)
 }
 
-
-
 #[get("/stream/{folder_id}/{message_id}")]
 async fn stream_media(
     req: actix_web::HttpRequest,
@@ -238,6 +199,43 @@ async fn stream_media(
             log::error!("Stream request failed: Invalid or missing stream token for msg {}", message_id);
             return HttpResponse::Forbidden().body("Invalid or missing stream token")
         },
+    }
+
+    // Check if offline storage has this file locally on disk!
+    let mut base_dirs = Vec::new();
+    if let Ok(p) = std::env::var("APPDATA") { base_dirs.push(std::path::PathBuf::from(p)); }
+    if let Ok(p) = std::env::var("LOCALAPPDATA") { base_dirs.push(std::path::PathBuf::from(p)); }
+    if let Ok(p) = std::env::var("HOME") { base_dirs.push(std::path::PathBuf::from(p)); }
+    if let Ok(p) = std::env::var("USERPROFILE") { base_dirs.push(std::path::PathBuf::from(p)); }
+
+    for base_dir in base_dirs {
+        let possible_dirs = vec![
+            base_dir.join("com.chauhanpratham.telegramdrive").join("offline_storage"),
+            base_dir.join("chauhan-pratham").join("Telegram Drive").join("offline_storage"),
+            base_dir.join("com.telegramdrive.app").join("offline_storage"),
+            base_dir.join("Telegram Drive").join("offline_storage"),
+            base_dir.join("app").join("offline_storage"),
+        ];
+
+        for offline_dir in possible_dirs {
+            if offline_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(&offline_dir) {
+                    let prefix = format!("{}_", message_id);
+                    for entry in entries.flatten() {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        if file_name.starts_with(&prefix) || file_name == message_id.to_string() {
+                            let local_path = entry.path();
+                            if local_path.exists() && std::fs::metadata(&local_path).map(|m| m.len() > 0).unwrap_or(false) {
+                                log::info!("Stream request: Serving offline file locally from disk: {:?}", local_path);
+                                if let Ok(named_file) = actix_files::NamedFile::open_async(&local_path).await {
+                                    return named_file.into_response(&req);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     
     // Parse folder ID
@@ -266,8 +264,7 @@ async fn stream_media(
         match resolve_peer(&client, folder_id, &data.peer_cache).await {
             Ok(peer) => {
                 log::debug!("Stream request: Peer resolved, fetching message {}...", message_id);
-                // Try to fetch message efficiently
-                 match client.get_messages_by_id(peer, &[message_id]).await {
+                match client.get_messages_by_id(peer, &[message_id]).await {
                     Ok(messages) => {
                         if let Some(Some(msg)) = messages.first() {
                             if let Some(media) = msg.media() {
@@ -326,12 +323,6 @@ pub async fn start_server(
     
     log::info!("Starting Streaming Server on port {}", port);
 
-    // Bind the listener to 127.0.0.1 explicitly.
-    // The streaming server is only accessed from the local frontend — binding
-    // to 0.0.0.0 is unnecessary and can trigger firewall prompts on Windows.
-    // 127.0.0.1 is the most universally reliable loopback address across all
-    // platforms (Windows, macOS, Linux) and pairs correctly with the "localhost"
-    // hostname used by the client (localhost → 127.0.0.1 is the standard mapping).
     let ipv4_addr = format!("127.0.0.1:{}", port);
     let listener = match TcpListener::bind(&ipv4_addr) {
         Ok(l) => {

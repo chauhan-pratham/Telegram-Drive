@@ -21,6 +21,7 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
     if (items.length === 0) return null;
 
     const hasPendingOrActive = items.some(i => i.status === 'pending' || i.status === 'uploading' || i.status === 'downloading');
+    const hasFinished = items.some(i => i.status === 'success' || i.status === 'error' || i.status === 'cancelled');
 
     return (
         <div className="fixed bottom-4 right-4 w-80 bg-telegram-surface border border-telegram-border rounded-xl shadow-2xl overflow-hidden z-[100]">
@@ -30,7 +31,9 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
                     {hasPendingOrActive && (
                         <button onClick={onCancelAll} className="text-xs text-red-400 hover:text-red-300 transition-colors">Cancel All</button>
                     )}
-                    <button onClick={onClearFinished} className="text-xs text-telegram-primary hover:text-telegram-text transition-colors">Clear Finished</button>
+                    {hasFinished && (
+                        <button onClick={onClearFinished} className="text-xs text-telegram-primary hover:text-telegram-text transition-colors">Clear Finished</button>
+                    )}
                 </div>
             </div>
             <div className="max-h-60 overflow-y-auto p-2 space-y-2">
@@ -44,7 +47,7 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
                                         item.status === 'error' ? 'bg-red-500' : 'bg-green-500'
                                 }`} />
                             <div className="flex-1 truncate text-telegram-subtext" title={item.url || item.path}>
-                                {(item.url || item.path).split('/').pop()}
+                                {(item.url || item.path).split(/[/\\]/).pop()}
                             </div>
                             {(item.status === 'uploading' || item.status === 'downloading') && (
                                 <button onClick={() => onCancelItem(item.id)} className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
@@ -76,7 +79,7 @@ export function UploadQueue({ items, onClearFinished, onCancelAll, onCancelItem,
                                 </div>
                                 <div className="flex justify-between text-[10px] text-telegram-subtext mt-0.5">
                                     <span>
-                                        {item.status === 'downloading' ? 'Caching: ' : 'Uploading: '}
+                                        {item.status === 'downloading' || item.phase === 'downloading' ? 'Downloading to local cache... ' : 'Uploading chunks to Telegram... '}
                                         {item.uploadedBytes !== undefined && item.totalBytes !== undefined
                                             ? `${formatBytes(item.uploadedBytes)} / ${formatBytes(item.totalBytes)}`
                                             : item.progress !== undefined ? `${item.progress}%` : ''}

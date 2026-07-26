@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Plus, ArrowUpDown, ArrowUp, ArrowDown, FolderUp, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, Folder, MoreVertical, Loader2, Users } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../../context/SettingsContext';
@@ -8,9 +8,10 @@ import { EmptyState } from './EmptyState';
 import { TelegramFile, TelegramFolder } from '../../../types';
 import { ContextMenu } from './ContextMenu';
 import { FileListItem } from './FileListItem';
+import { useDrive } from '../../../context/DriveContext';
+import { formatBytes } from '../../../utils';
 
 type SortField = 'name' | 'size' | 'date';
-type SortDirection = 'asc' | 'desc';
 
 interface FileExplorerProps {
     files: TelegramFile[];
@@ -34,8 +35,9 @@ interface FileExplorerProps {
     onRename?: (file: TelegramFile) => void;
     onFileMove?: (file: TelegramFile) => void;
     folders?: TelegramFolder[];
-    cardScale: number;
-    onCardScaleChange: (scale: number) => void;
+    mutatingFolderIds?: number[];
+    onFolderOpen?: (id: number) => void;
+    onSelectionChange?: (ids: number[]) => void;
 }
 
 
@@ -73,11 +75,11 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 
 export function FileExplorer({
     files, loading, error, viewMode, selectedIds, activeFolderId,
-    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload, showFolderUpload, onToggleSelection, onDrop, onDragStart, onDragEnd, onShare, onRename, onFileMove,
-    folders, cardScale, onCardScaleChange
+    onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload: _onFolderUpload, showFolderUpload: _showFolderUpload, onToggleSelection, onDrop, onDragStart, onDragEnd, onShare, onRename, onFileMove,
+    folders = [], mutatingFolderIds = [], onFolderOpen, onSelectionChange
 }: FileExplorerProps) {
-    const [sortField, setSortField] = useState<SortField>('name');
-    const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+    const cardScale = 1.0;
+    const { currentTab, sortField, setSortField, sortDirection, setSortDirection } = useDrive();
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
     const { t } = useTranslation();
     const { settings } = useSettings();
@@ -92,10 +94,85 @@ export function FileExplorer({
     const cardWidth = (containerWidth - (GAP * (columns - 1))) / columns;
     const cardHeight = cardWidth * 0.75; // aspect-[4/3]
 
+    // Lasso Selection States
+    const [selectionBox, setSelectionBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+    const [isSelecting, setIsSelecting] = useState(false);
+    const dragStartPos = useRef({ x: 0, y: 0 });
+
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        // Only trigger on left-click on background elements
+        if (e.button !== 0) return;
+        const target = e.target as HTMLElement;
+        const isBg = target === parentRef.current || target.classList.contains('lasso-bg') || target.tagName === 'NAV';
+        if (!isBg) return;
+
+        e.preventDefault();
+        const rect = parentRef.current!.getBoundingClientRect();
+        const startX = e.clientX - rect.left + parentRef.current!.scrollLeft;
+        const startY = e.clientY - rect.top + parentRef.current!.scrollTop;
+
+        dragStartPos.current = { x: startX, y: startY };
+        setIsSelecting(true);
+        setSelectionBox({ left: startX, top: startY, width: 0, height: 0 });
+    }, []);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!isSelecting || !selectionBox || !parentRef.current) return;
+
+        const parent = parentRef.current;
+        const rect = parent.getBoundingClientRect();
+        const currentX = e.clientX - rect.left + parent.scrollLeft;
+        const currentY = e.clientY - rect.top + parent.scrollTop;
+
+        const startX = dragStartPos.current.x;
+        const startY = dragStartPos.current.y;
+
+        const left = Math.min(startX, currentX);
+        const top = Math.min(startY, currentY);
+        const width = Math.abs(startX - currentX);
+        const height = Math.abs(startY - currentY);
+
+        setSelectionBox({ left, top, width, height });
+
+        // Check intersections with elements containing data-file-id
+        const cardElements = parent.querySelectorAll('[data-file-id]');
+        const intersectedIds: number[] = [];
+
+        cardElements.forEach((el) => {
+            const cardEl = el as HTMLElement;
+            const fileId = parseInt(cardEl.getAttribute('data-file-id') || '', 10);
+            if (isNaN(fileId)) return;
+
+            const cardRect = cardEl.getBoundingClientRect();
+            const cardLeft = cardRect.left - rect.left + parent.scrollLeft;
+            const cardTop = cardRect.top - rect.top + parent.scrollTop;
+            const cardWidth = cardRect.width;
+            const cardHeight = cardRect.height;
+
+            const intersects = (
+                left < cardLeft + cardWidth &&
+                left + width > cardLeft &&
+                top < cardTop + cardHeight &&
+                top + height > cardTop
+            );
+
+            if (intersects) {
+                intersectedIds.push(fileId);
+            }
+        });
+
+        onSelectionChange?.(intersectedIds);
+    }, [isSelecting, selectionBox, onSelectionChange]);
+
+    const handleMouseUp = useCallback(() => {
+        setIsSelecting(false);
+        setSelectionBox(null);
+    }, []);
+
     const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
         e.preventDefault();
         e.stopPropagation();
-        setContextMenu({ x: e.clientX, y: e.clientY, file });
+        setContextMenu(prev => prev?.file.id === file.id ? null : { x: e.clientX, y: e.clientY, file });
     }, []);
 
     const sortedFiles = useMemo(() => {
@@ -114,31 +191,44 @@ export function FileExplorer({
             }
             return sortDirection === 'asc' ? comparison : -comparison;
         });
-    }, [files, sortField, sortDirection]);
+    }, [files, sortField, sortDirection, settings.language]);
+
+    const sortedFolders = useMemo(() => {
+        if (!folders) return [];
+        return [...folders].sort((a, b) => {
+            if (a.id === -999) return -1;
+            if (b.id === -999) return 1;
+
+            let comparison = 0;
+            switch (sortField) {
+                case 'name':
+                    comparison = a.name.localeCompare(b.name, settings.language, { numeric: true, sensitivity: 'base' });
+                    break;
+                default:
+                    comparison = a.name.localeCompare(b.name, settings.language, { numeric: true, sensitivity: 'base' });
+                    break;
+            }
+            return sortDirection === 'asc' ? comparison : -comparison;
+        });
+    }, [folders, sortField, sortDirection, settings.language]);
 
     const handlePreviewRequest = useCallback((file: TelegramFile) => {
         onPreview(file, sortedFiles);
     }, [onPreview, sortedFiles]);
 
+    const showFoldersList = (currentTab === 'my-drive' || currentTab === 'trash') && activeFolderId === null && sortedFolders.length > 0;
 
     const gridRows = useMemo(() => {
-        const rows: (TelegramFile | 'upload' | 'upload-folder')[][] = [];
-        const tail: ('upload' | 'upload-folder')[] = ['upload'];
-        if (showFolderUpload) tail.push('upload-folder');
-        const itemsWithUpload: (TelegramFile | 'upload' | 'upload-folder')[] = [...sortedFiles, ...tail];
-        for (let i = 0; i < itemsWithUpload.length; i += columns) {
-            rows.push(itemsWithUpload.slice(i, i + columns));
+        const rows: TelegramFile[][] = [];
+        for (let i = 0; i < sortedFiles.length; i += columns) {
+            rows.push(sortedFiles.slice(i, i + columns));
         }
         return rows;
-    }, [sortedFiles, columns, showFolderUpload]);
-
+    }, [sortedFiles, columns]);
 
     const listItems = useMemo(() => {
-        const tail: ('upload' | 'upload-folder')[] = ['upload'];
-        if (showFolderUpload) tail.push('upload-folder');
-        return [...sortedFiles, ...tail];
-    }, [sortedFiles, activeFolderId, showFolderUpload]);
-
+        return sortedFiles;
+    }, [sortedFiles]);
 
     const gridVirtualizer = useVirtualizer({
         count: gridRows.length,
@@ -170,10 +260,10 @@ export function FileExplorer({
 
     const handleSort = (field: SortField) => {
         if (sortField === field) {
-            setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
         } else {
             setSortField(field);
-            setSortDirection('asc');
+            setSortDirection(field === 'date' ? 'desc' : 'asc');
         }
     };
 
@@ -190,17 +280,17 @@ export function FileExplorer({
                 <div className="w-8 h-8 border-4 border-telegram-primary border-t-transparent rounded-full animate-spin"></div>
                 Loading your files...
             </div>
-        )
+        );
     }
 
     if (error) {
-        return <div className="flex-1 p-6 flex justify-center items-center text-red-400">Error loading files</div>
+        return <div className="flex-1 p-6 flex justify-center items-center text-red-400">Error loading files</div>;
     }
 
-    if (files.length === 0) {
+    if (files.length === 0 && !showFoldersList) {
         return (
             <div className="flex-1 p-6 overflow-auto">
-                <EmptyState onUpload={onManualUpload} />
+                <EmptyState onUpload={onManualUpload} tab={currentTab} />
             </div>
         );
     }
@@ -208,214 +298,321 @@ export function FileExplorer({
     return (
         <div
             ref={parentRef}
-            className="flex-1 p-6 overflow-auto custom-scrollbar"
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            className="flex-1 p-6 overflow-auto custom-scrollbar select-none relative lasso-bg"
         >
-            {viewMode === 'grid' ? (
-                <>
-
-                    <div className="flex items-center gap-2 mb-4 text-xs text-telegram-subtext">
-                        <span>Sort by:</span>
-                        <button
-                            onClick={() => handleSort('name')}
-                            className={`px-2 py-1 rounded flex items-center gap-1 hover:bg-white/5 ${sortField === 'name' ? 'text-telegram-primary' : ''}`}
-                        >
-                            Name <SortIcon field="name" />
-                        </button>
-                        <button
-                            onClick={() => handleSort('size')}
-                            className={`px-2 py-1 rounded flex items-center gap-1 hover:bg-white/5 ${sortField === 'size' ? 'text-telegram-primary' : ''}`}
-                        >
-                            Size <SortIcon field="size" />
-                        </button>
-                        <button
-                            onClick={() => handleSort('date')}
-                            className={`px-2 py-1 rounded flex items-center gap-1 hover:bg-white/5 ${sortField === 'date' ? 'text-telegram-primary' : ''}`}
-                        >
-                            Date <SortIcon field="date" />
-                        </button>
-
-                        {/* Zoom slider */}
-                        <div className="ml-auto flex items-center gap-1.5">
-                            <button
-                                onClick={() => onCardScaleChange(Math.max(0.5, cardScale - 0.25))}
-                                className="p-1 rounded hover:bg-white/10 text-telegram-subtext hover:text-telegram-text transition-colors"
-                                title="Smaller thumbnails"
-                                disabled={cardScale <= 0.5}
-                            >
-                                <ZoomOut className="w-3.5 h-3.5" />
-                            </button>
-                            <input
-                                type="range"
-                                min="0.5"
-                                max="2"
-                                step="0.25"
-                                value={cardScale}
-                                onChange={(e) => onCardScaleChange(parseFloat(e.target.value))}
-                                className="w-20 h-1 bg-telegram-border rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-telegram-primary [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:transition-transform [&::-webkit-slider-thumb]:hover:scale-125"
-                                title={`Thumbnail zoom: ${Math.round(cardScale * 100)}%`}
-                            />
-                            <button
-                                onClick={() => onCardScaleChange(Math.min(2, cardScale + 0.25))}
-                                className="p-1 rounded hover:bg-white/10 text-telegram-subtext hover:text-telegram-text transition-colors"
-                                title="Larger thumbnails"
-                                disabled={cardScale >= 2}
-                            >
-                                <ZoomIn className="w-3.5 h-3.5" />
-                            </button>
-                            <span className="text-[10px] text-telegram-subtext/60 w-10 text-right tabular-nums">{Math.round(cardScale * 100)}%</span>
+            {/* Selection overlay box */}
+            {selectionBox && (
+                <div
+                    className="absolute border border-telegram-primary bg-telegram-primary/10 rounded pointer-events-none z-40 transition-all duration-75"
+                    style={{
+                        left: `${selectionBox.left}px`,
+                        top: `${selectionBox.top}px`,
+                        width: `${selectionBox.width}px`,
+                        height: `${selectionBox.height}px`,
+                    }}
+                />
+            )}
+            {/* Folders Section (Google Drive Style) */}
+            {showFoldersList && (
+                <div className="mb-8 lasso-bg">
+                    <h3 className="text-xs font-bold text-telegram-subtext uppercase tracking-wider mb-3">Folders</h3>
+                    {viewMode === 'grid' ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {sortedFolders.map(folder => {
+                                const isMutating = mutatingFolderIds.includes(folder.id);
+                                return (
+                                    <div
+                                        key={folder.id}
+                                        onDoubleClick={() => {
+                                            if (onFolderOpen) onFolderOpen(folder.id);
+                                        }}
+                                        onContextMenu={(e) => {
+                                            if (folder.id !== -999) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setContextMenu({
+                                                    x: e.clientX,
+                                                    y: e.clientY,
+                                                    file: {
+                                                        id: folder.id,
+                                                        name: folder.name,
+                                                        type: 'folder',
+                                                        size: 0,
+                                                        sizeStr: '--',
+                                                        date: '',
+                                                        mime_type: '',
+                                                    } as any as TelegramFile
+                                                });
+                                            }
+                                        }}
+                                        className={`flex items-center justify-between gap-3 p-3.5 border border-telegram-border/20 rounded-2xl transition-all relative ${
+                                            isMutating
+                                                ? 'pointer-events-none opacity-60 cursor-not-allowed bg-telegram-hover/20'
+                                                : 'cursor-pointer bg-telegram-hover/40 hover:bg-telegram-hover hover:border-telegram-primary/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)]'
+                                        } ${
+                                            selectedIds.includes(folder.id)
+                                                ? 'border-telegram-primary bg-telegram-primary/10 ring-1 ring-telegram-primary'
+                                                : ''
+                                        }`}
+                                        onClick={(e) => {
+                                            if (folder.id !== -999) {
+                                                onFileClick(e, folder.id, []);
+                                            } else {
+                                                e.stopPropagation();
+                                            }
+                                        }}
+                                    >
+                                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                                            {isMutating ? (
+                                                <Loader2 className="w-5 h-5 text-telegram-primary shrink-0 animate-spin" />
+                                            ) : (
+                                                <div className="relative shrink-0">
+                                                    <Folder className="w-5 h-5 text-telegram-primary shrink-0 fill-telegram-primary/25" strokeWidth={1.8} />
+                                                    {folder.is_shared && (
+                                                        <div className="absolute -bottom-1 -right-1 bg-telegram-surface border border-telegram-border/50 rounded-full p-0.5 shadow-sm flex items-center justify-center">
+                                                            <Users className="w-2.5 h-2.5 text-telegram-primary" strokeWidth={2} />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <span className="text-xs font-semibold text-telegram-text truncate">{folder.name}</span>
+                                        </div>
+                                        {!isMutating && folder.id !== -999 && (
+                                            <button 
+                                                className="opacity-0 group-hover:opacity-100 p-1 hover:bg-telegram-hover/60 rounded-full transition-opacity text-telegram-subtext hover:text-telegram-text cursor-pointer flex-shrink-0"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onFileClick(e, folder.id, []);
+                                                }}
+                                            >
+                                                <MoreVertical className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
-                    </div>
+                    ) : (
+                        <div className="flex flex-col">
+                            {sortedFolders.map(folder => {
+                                const isMutating = mutatingFolderIds.includes(folder.id);
+                                const folderFiles = files.filter(f => f.folder_id === folder.id || (folder.id === -999 && (f.folder_id === null || f.folder_id === -999)));
+                                const folderSize = folderFiles.reduce((acc, f) => acc + (f.size || 0), 0);
+                                const folderItemCount = folderFiles.length;
 
+                                const sizeLabel = folderSize > 0 
+                                    ? formatBytes(folderSize) 
+                                    : folderItemCount > 0 
+                                        ? `${folderItemCount} item${folderItemCount !== 1 ? 's' : ''}` 
+                                        : 'Empty';
 
-                    <div
-                        className="relative w-full"
-                        style={{ height: `${gridVirtualizer.getTotalSize()}px` }}
-                    >
-                        {gridVirtualizer.getVirtualItems().map((virtualRow) => {
-                            const row = gridRows[virtualRow.index];
-                            return (
-                                <div
-                                    key={virtualRow.key}
-                                    className="absolute top-0 left-0 w-full grid"
-                                    style={{
-                                        height: `${cardHeight}px`,
-                                        transform: `translateY(${virtualRow.start}px)`,
-                                        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-                                        gap: `${GAP}px`,
-                                    }}
-                                >
-                                    {row.map((item) => {
-                                        if (item === 'upload') {
-                                            return (
-                                                <button
-                                                    key="upload"
-                                                    onClick={(e) => { e.stopPropagation(); onManualUpload(); }}
-                                                    className="border-2 border-dashed border-telegram-border rounded-xl flex flex-col items-center justify-center text-telegram-subtext hover:border-telegram-primary hover:text-telegram-primary transition-all group overflow-hidden"
-                                                    style={{ height: `${cardHeight}px` }}
-                                                >
-                                                    <Plus className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" />
-                                                    <span className="text-sm font-medium">{t('common.upload_file')}</span>
-                                                </button>
-                                            );
-                                        }
-                                        if (item === 'upload-folder') {
-                                            return (
-                                                <button
-                                                    key="upload-folder"
-                                                    onClick={(e) => { e.stopPropagation(); onFolderUpload(); }}
-                                                    className="border-2 border-dashed border-telegram-border rounded-xl flex flex-col items-center justify-center text-telegram-subtext hover:border-telegram-primary hover:text-telegram-primary transition-all group overflow-hidden"
-                                                    style={{ height: `${cardHeight}px` }}
-                                                >
-                                                    <FolderUp className="w-8 h-8 mb-2 group-hover:scale-110 transition-transform" />
-                                                    <span className="text-sm font-medium">{t('common.upload_folder')}</span>
-                                                </button>
-                                            );
-                                        }
-                                        const file = item;
-                                        return (
-                                            <FileCard
-                                                key={file.id}
-                                                file={file}
-                                                isSelected={selectedIds.includes(file.id)}
-                                                onClick={(e) => onFileClick(e, file.id, sortedFiles)}
-                                                onContextMenu={(e) => handleContextMenu(e, file)}
-                                                onDelete={() => onDelete(file.id)}
-                                                onDownload={() => onDownload(file.id, file.name)}
-                                                onPreview={() => handlePreviewRequest(file)}
-                                                onDrop={onDrop}
-                                                onDragStart={onDragStart}
-                                                onDragEnd={onDragEnd}
-                                                activeFolderId={activeFolderId}
-                                                height={cardHeight}
-                                                onToggleSelection={() => onToggleSelection(file.id)}
-                                                onShare={onShare ? () => onShare(file) : undefined}
-                                                selectedIds={selectedIds}
-                                            />
-                                        );
-                                    })}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </>
-            ) : (
-                <div className="flex flex-col w-full">
-                    {/* List Header */}
-                    <div className="grid grid-cols-[2rem_2fr_6rem_8rem] gap-4 px-4 py-2 text-xs font-semibold text-telegram-subtext border-b border-telegram-border mb-2 select-none items-center">
-                        <div className="text-center">#</div>
-                        <button onClick={() => handleSort('name')} className="flex items-center gap-1 hover:text-telegram-text transition-colors">
-                            {t('common.name')} <SortIcon field="name" />
-                        </button>
-                        <button onClick={() => handleSort('size')} className="flex items-center gap-1 justify-end hover:text-telegram-text transition-colors">
-                            {t('common.size')} <SortIcon field="size" />
-                        </button>
-                        <button onClick={() => handleSort('date')} className="flex items-center gap-1 justify-end hover:text-telegram-text transition-colors">
-                            {t('common.date')} <SortIcon field="date" />
-                        </button>
-                    </div>
+                                const dateOrStatusLabel = (folder as any).created_at 
+                                    ? new Date((folder as any).created_at).toLocaleDateString()
+                                    : folder.id === -999 
+                                        ? 'Default' 
+                                        : folder.is_shared 
+                                            ? 'Shared' 
+                                            : `${folderItemCount} item${folderItemCount !== 1 ? 's' : ''}`;
 
-                    <div
-                        className="relative w-full"
-                        style={{ height: `${listVirtualizer.getTotalSize()}px` }}
-                    >
-                        {listVirtualizer.getVirtualItems().map((virtualItem) => {
-                            const item = listItems[virtualItem.index];
-                            if (item === 'upload') {
                                 return (
                                     <div
-                                        key="upload"
-                                        className="absolute top-0 left-0 w-full"
-                                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                                        key={folder.id}
+                                        onDoubleClick={() => { if (onFolderOpen) onFolderOpen(folder.id); }}
+                                        onContextMenu={(e) => {
+                                            if (folder.id !== -999) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                onFileClick(e, folder.id, []);
+                                                setContextMenu(prev => {
+                                                    if (prev?.file.id === folder.id) return null;
+                                                    return {
+                                                        x: e.clientX,
+                                                        y: e.clientY,
+                                                        file: {
+                                                            id: folder.id,
+                                                            name: folder.name,
+                                                            size: 0,
+                                                            type: 'folder',
+                                                            date: '',
+                                                            mime_type: 'folder',
+                                                            isFolder: true,
+                                                        } as any as TelegramFile
+                                                    };
+                                                });
+                                            }
+                                        }}
+                                        className={`group grid grid-cols-[2rem_minmax(0,1fr)_2.5rem] sm:grid-cols-[2rem_minmax(0,2fr)_6.5rem_11rem_2.5rem] gap-4 items-center px-4 py-3 rounded-lg border border-transparent transition-all ${
+                                            isMutating
+                                                ? 'pointer-events-none opacity-60 cursor-not-allowed'
+                                                : 'cursor-pointer hover:bg-telegram-hover'
+                                        } ${
+                                            selectedIds.includes(folder.id) ? 'bg-telegram-primary/10 border-telegram-primary/20' : ''
+                                        }`}
+                                        onClick={(e) => {
+                                            if (folder.id !== -999) {
+                                                onFileClick(e, folder.id, []);
+                                            } else {
+                                                e.stopPropagation();
+                                            }
+                                        }}
                                     >
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); onManualUpload(); }}
-                                            className="flex items-center gap-4 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-telegram-border text-telegram-subtext hover:text-telegram-text hover:bg-telegram-hover w-full"
-                                        >
-                                            <div className="w-5 h-5 flex items-center justify-center"><Plus className="w-4 h-4" /></div>
-                                            <span className="text-sm font-medium">{t('common.upload_file')}...</span>
-                                        </button>
+                                        <div className="flex justify-center">
+                                            {isMutating ? (
+                                                <Loader2 className="w-5 h-5 text-telegram-primary animate-spin" />
+                                            ) : (
+                                                <div className="relative shrink-0">
+                                                    <Folder className="w-5 h-5 text-telegram-primary fill-telegram-primary/20" strokeWidth={1.8} />
+                                                    {folder.is_shared && (
+                                                        <div className="absolute -bottom-1 -right-1 bg-telegram-surface border border-telegram-border/50 rounded-full p-0.5 shadow-sm flex items-center justify-center">
+                                                            <Users className="w-2.5 h-2.5 text-telegram-primary" strokeWidth={2} />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="min-w-0 truncate text-sm text-telegram-text font-medium flex items-center gap-2">
+                                            <span className="truncate">{folder.name}</span>
+                                        </div>
+                                        <div className="hidden sm:block text-xs text-telegram-subtext text-right tabular-nums">{sizeLabel}</div>
+                                        <div className="hidden sm:block text-xs text-telegram-subtext text-right tabular-nums">{dateOrStatusLabel}</div>
+                                        <div className="flex justify-end relative">
+                                            {!isMutating && folder.id !== -999 && (
+                                                <button 
+                                                    className="opacity-0 group-hover:opacity-100 p-1 hover:bg-telegram-hover/60 rounded-full transition-opacity text-telegram-subtext hover:text-telegram-text cursor-pointer"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        onFileClick(e, folder.id, []);
+                                                        const folderAsFile = {
+                                                            id: folder.id,
+                                                            name: folder.name,
+                                                            size: 0,
+                                                            type: 'folder',
+                                                            date: '',
+                                                            mime_type: 'folder',
+                                                            isFolder: true,
+                                                        } as any as TelegramFile;
+                                                        setContextMenu(prev => prev?.file.id === folder.id ? null : { x: e.clientX, y: e.clientY, file: folderAsFile });
+                                                    }}
+                                                >
+                                                    <MoreVertical className="w-4 h-4" />
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 );
-                            }
-                            if (item === 'upload-folder') {
-                                return (
-                                    <div
-                                        key="upload-folder"
-                                        className="absolute top-0 left-0 w-full"
-                                        style={{ transform: `translateY(${virtualItem.start}px)` }}
-                                    >
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); onFolderUpload(); }}
-                                            className="flex items-center gap-4 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-telegram-border text-telegram-subtext hover:text-telegram-text hover:bg-telegram-hover w-full"
-                                        >
-                                            <div className="w-5 h-5 flex items-center justify-center"><FolderUp className="w-4 h-4" /></div>
-                                            <span className="text-sm font-medium">{t('common.upload_folder')}...</span>
-                                        </button>
-                                    </div>
-                                );
-                            }
-                            const file = item;
-                            return (
-                                <div
-                                    key={file.id}
-                                    className="absolute top-0 left-0 w-full"
-                                    style={{ transform: `translateY(${virtualItem.start}px)` }}
-                                >
-                                    <FileListItem
-                                        file={file}
-                                        selectedIds={selectedIds}
-                                        onFileClick={(e, id) => onFileClick(e, id, sortedFiles)}
-                                        handleContextMenu={handleContextMenu}
-                                        onDragStart={onDragStart}
-                                        onDragEnd={onDragEnd}
-                                        onDrop={onDrop}
-                                    />
-                                </div>
-                            );
-                        })}
-                    </div>
+                            })}
+                        </div>
+                    )}
                 </div>
             )}
+
+            {/* Files Section Title if Folders are present */}
+            {showFoldersList && sortedFiles.length > 0 && (
+                <h3 className="text-xs font-bold text-telegram-subtext uppercase tracking-wider mb-3">Files</h3>
+            )}
+
+            {sortedFiles.length > 0 || !showFoldersList ? (
+                viewMode === 'grid' ? (
+                    <>
+                        <div
+                            className="relative w-full lasso-bg"
+                            style={{ height: `${gridVirtualizer.getTotalSize()}px` }}
+                        >
+                            {gridVirtualizer.getVirtualItems().map((virtualRow) => {
+                                const row = gridRows[virtualRow.index];
+                                return (
+                                    <div
+                                        key={virtualRow.key}
+                                        className="absolute top-0 left-0 w-full grid lasso-bg"
+                                        style={{
+                                            height: `${cardHeight}px`,
+                                            transform: `translateY(${virtualRow.start}px)`,
+                                            gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+                                            gap: `${GAP}px`,
+                                        }}
+                                    >
+                                        {row.map((file) => {
+                                            return (
+                                                <div
+                                                    key={file.id}
+                                                    data-file-id={file.id}
+                                                    onDoubleClick={() => handlePreviewRequest(file)}
+                                                >
+                                                    <FileCard
+                                                        file={file}
+                                                        isSelected={selectedIds.includes(file.id)}
+                                                        onClick={(e) => onFileClick(e, file.id, sortedFiles)}
+                                                        onContextMenu={(e) => handleContextMenu(e, file)}
+                                                        onDelete={() => onDelete(file.id)}
+                                                        onDownload={() => onDownload(file.id, file.name)}
+                                                        onPreview={() => handlePreviewRequest(file)}
+                                                        onDrop={onDrop}
+                                                        onDragStart={onDragStart}
+                                                        onDragEnd={onDragEnd}
+                                                        activeFolderId={activeFolderId}
+                                                        height={cardHeight}
+                                                        onToggleSelection={() => onToggleSelection(file.id)}
+                                                        onShare={onShare ? () => onShare(file) : undefined}
+                                                        selectedIds={selectedIds}
+                                                    />
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </>
+                ) : (
+                    <div className="flex flex-col w-full lasso-bg">
+                        {/* List Header */}
+                        <div className="grid grid-cols-[2rem_minmax(0,1fr)_2.5rem] sm:grid-cols-[2rem_minmax(0,2fr)_6.5rem_11rem_2.5rem] gap-4 px-4 py-2 text-xs font-semibold text-telegram-subtext border-b border-telegram-border/40 mb-2 select-none items-center lasso-bg">
+                            <div className="text-center">#</div>
+                            <button onClick={() => handleSort('name')} className="flex items-center gap-1 hover:text-telegram-text transition-colors min-w-0">
+                                <span className="truncate">{t('common.name')}</span> <SortIcon field="name" />
+                            </button>
+                            <button onClick={() => handleSort('size')} className="hidden sm:flex items-center gap-1 justify-end hover:text-telegram-text transition-colors text-right">
+                                {t('common.size')} <SortIcon field="size" />
+                            </button>
+                            <button onClick={() => handleSort('date')} className="hidden sm:flex items-center gap-1 justify-end hover:text-telegram-text transition-colors text-right">
+                                {t('common.date')} <SortIcon field="date" />
+                            </button>
+                            <div className="w-10"></div>
+                        </div>
+
+                        <div
+                            className="relative w-full lasso-bg"
+                            style={{ height: `${listVirtualizer.getTotalSize()}px` }}
+                        >
+                            {listVirtualizer.getVirtualItems().map((virtualItem) => {
+                                const file = listItems[virtualItem.index];
+                                return (
+                                    <div
+                                        key={file.id}
+                                        data-file-id={file.id}
+                                        className="absolute top-0 left-0 w-full"
+                                        style={{ transform: `translateY(${virtualItem.start}px)` }}
+                                        onDoubleClick={() => handlePreviewRequest(file)}
+                                    >
+                                        <FileListItem
+                                            file={file}
+                                            selectedIds={selectedIds}
+                                            onFileClick={(e, id) => onFileClick(e, id, sortedFiles)}
+                                            handleContextMenu={handleContextMenu}
+                                            onDragStart={onDragStart}
+                                            onDragEnd={onDragEnd}
+                                            onDrop={onDrop}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )
+            ) : null}
 
             {contextMenu && (
                 <ContextMenu

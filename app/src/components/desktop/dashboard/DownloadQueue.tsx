@@ -1,5 +1,7 @@
 import { DownloadItem } from "../../../types";
 import { Download, Check, X, AlertCircle, RotateCcw } from "lucide-react";
+import { invoke } from '@tauri-apps/api/core';
+import { toast } from 'sonner';
 
 function formatBytes(bytes: number): string {
     if (bytes === 0) return '0 B';
@@ -60,6 +62,21 @@ export function DownloadQueue({ items, onClearFinished, onCancelAll, onCancelIte
                             <div className="flex-1 truncate text-telegram-subtext" title={item.filename}>
                                 {item.filename}
                             </div>
+                            {item.status === 'success' && item.savePath && (
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            await invoke('cmd_open_file_externally', { path: item.savePath! });
+                                        } catch (e) {
+                                            toast.error(`Failed to open file: ${e}`);
+                                        }
+                                    }}
+                                    className="text-xs text-telegram-primary hover:underline transition-colors shrink-0 cursor-pointer font-semibold px-2 py-0.5 rounded hover:bg-telegram-primary/10"
+                                    title="Open file"
+                                >
+                                    Open
+                                </button>
+                            )}
                             {item.status === 'downloading' && (
                                 <button onClick={() => onCancelItem(item.id)} className="text-gray-400 hover:text-red-400 transition-colors flex-shrink-0" title="Cancel">
                                     <X className="w-3.5 h-3.5" />

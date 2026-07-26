@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { useQueryClient } from '@tanstack/react-query';
-import { X, Folder, File, Archive, Loader2, AlertTriangle, FileArchive, Download, ChevronDown, HardDrive, Zap, Square, CheckCircle, XCircle } from 'lucide-react';
+import { ArrowLeft, Folder, File, Archive, Loader2, AlertTriangle, FileArchive, Download, ChevronDown, HardDrive, Zap, Square, CheckCircle, XCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { ArchiveEntry, TelegramFile, TelegramFolder } from '../../../types';
 import { formatBytes } from '../../../utils';
@@ -186,7 +186,7 @@ export function ArchiveViewerModal({
                 }
                 failed++;
                 extractAllEntryStatuses.current.set(i, 'failed');
-                console.error(`Extract-all failed for "${entry.filename}":`, msg);
+                console.error('Extract-all failed for entry:', entry.filename, msg);
             } finally {
                 // Clean up temp file
                 if (extracted?.temp_path) {
@@ -313,7 +313,7 @@ export function ArchiveViewerModal({
             )}
 
             <div
-                className="bg-telegram-surface border border-telegram-border rounded-xl w-[520px] max-h-[70vh] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+                className="bg-telegram-surface border border-telegram-border rounded-xl w-full max-w-[520px] max-w-[90vw] max-h-[70vh] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}
@@ -334,8 +334,9 @@ export function ArchiveViewerModal({
                         <button
                             onClick={onClose}
                             className="p-1.5 rounded-lg hover:bg-telegram-hover text-telegram-subtext hover:text-telegram-text transition-colors"
+                            title="Back"
                         >
-                            <X className="w-5 h-5" />
+                            <ArrowLeft className="w-5 h-5" />
                         </button>
                     </div>
                 </div>
@@ -710,7 +711,7 @@ function ExtractButton({ file, activeFolderId, folders, entryIndex, entryName, e
     const showProgress = uploading && progress;
 
     return (
-        <div className="shrink-0 mr-2 flex flex-col items-end gap-0.5" ref={menuRef}>
+        <div className="shrink-0 mr-2 flex flex-col items-end gap-0.5 relative" ref={menuRef}>
             <div className="flex items-center gap-0.5">
                 <button
                     onClick={handleExtract}
@@ -740,7 +741,7 @@ function ExtractButton({ file, activeFolderId, folders, entryIndex, entryName, e
             {/* Folder dropdown */}
             {folderMenuOpen && (
                 <div
-                    className="absolute right-2 mt-8 z-[220] w-48 bg-telegram-surface border border-telegram-border rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100"
+                    className="absolute right-0 top-full mt-1 z-[220] w-48 bg-telegram-surface border border-telegram-border rounded-lg shadow-xl overflow-hidden animate-in fade-in slide-in-from-top-1 duration-100"
                     onClick={e => e.stopPropagation()}
                 >
                     <div className="px-3 py-2 border-b border-telegram-border/50">

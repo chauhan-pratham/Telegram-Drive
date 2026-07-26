@@ -1,7 +1,9 @@
 use tauri::{State, Emitter};
 use std::sync::Arc;
-use grammers_client::types::{Media, Peer};
-use grammers_client::InputMessage;
+use grammers_client::media::Media;
+use grammers_client::peer::Peer;
+use grammers_session::types::PeerRef;
+use grammers_client::message::InputMessage;
 use grammers_tl_types as tl;
 use crate::TelegramState;
 use crate::models::{FolderMetadata, FileMetadata};
@@ -9,9 +11,9 @@ use crate::bandwidth::BandwidthManager;
 use crate::commands::utils::{resolve_peer, map_error};
 use crate::vpn_optimizer::{NetworkConfig, backoff_ms};
 use crate::db::DbConnection;
-use sqlite;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use rand::Rng;
 use std::sync::OnceLock;
 use std::sync::Mutex;
 use tokio::sync::oneshot;
@@ -449,7 +451,7 @@ pub fn copy_to_android_cache(_raw_path: &str) -> Result<String, String> {
 pub async fn create_folder_inner(
     name: &str,
     client: &grammers_client::Client,
-    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, Peer>>>,
+    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, PeerRef>>>,
 ) -> Result<FolderMetadata, String> {
     log::info!("Creating Telegram Channel: {}", name);
     
@@ -470,8 +472,10 @@ pub async fn create_folder_inner(
              let chat = u.chats.first().ok_or("No chat in updates")?;
              match chat {
                  tl::enums::Chat::Channel(c) => {
-                      let channel_obj = grammers_client::types::Channel { raw: c.clone() };
-                      peer_cache.write().await.insert(c.id, grammers_client::types::Peer::Channel(channel_obj));
+                      let channel_peer = grammers_client::peer::Peer::from_raw(client, tl::enums::Chat::Channel(c.clone()));
+                      if let Ok(Some(peer_ref)) = channel_peer.to_ref().await {
+                          peer_cache.write().await.insert(c.id, peer_ref);
+                      }
                       (c.id, c.access_hash.unwrap_or(0))
                  }
                  _ => return Err("Created chat is not a channel".to_string()),
@@ -479,6 +483,7 @@ pub async fn create_folder_inner(
         },
         _ => return Err("Unexpected response (not Updates::Updates)".to_string()), 
     };
+
 
     let _ = client.invoke(&tl::functions::messages::SetHistoryTtl {
         peer: tl::enums::InputPeer::Channel(tl::types::InputPeerChannel { channel_id: chat_id, access_hash }),
@@ -490,8 +495,10 @@ pub async fn create_folder_inner(
         parent_id: None,
         username: None,
         is_public: false,
+        is_owned: true,
         group_id: None,
         display_order: 0,
+        participants_count: None,
     })
 }
 
@@ -501,6 +508,19 @@ pub async fn cmd_create_folder(
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<FolderMetadata, String> {
+    // Check if a folder with the same name already exists (case-insensitive check)
+    {
+        let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM folder_metadata WHERE LOWER(name) = LOWER(?)",
+            rusqlite::params![name.as_str()],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        if count > 0 {
+            return Err("A folder with this name already exists".to_string());
+        }
+    }
+
     let client_opt = {
         state.client.lock().await.clone()
     };
@@ -514,8 +534,10 @@ pub async fn cmd_create_folder(
             parent_id: None,
             username: None,
             is_public: false,
+            is_owned: true,
             group_id: None,
             display_order: 0,
+            participants_count: None,
         }
     } else {
         let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
@@ -526,21 +548,12 @@ pub async fn cmd_create_folder(
     let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
     
     // Calculate new display order
-    let mut max_stmt = conn.prepare("SELECT MAX(display_order) FROM folder_metadata").map_err(|e: sqlite::Error| e.to_string())?;
-    let mut display_order = 0;
-    if let sqlite::State::Row = max_stmt.next().map_err(|e: sqlite::Error| e.to_string())? {
-        display_order = max_stmt.read::<Option<i64>, _>(0).ok().flatten().unwrap_or(0) + 1;
-    }
+    let display_order: i64 = conn.query_row("SELECT MAX(display_order) FROM folder_metadata", [], |row| row.get::<_, Option<i64>>(0)).ok().flatten().unwrap_or(0) + 1;
     
-    let mut insert_stmt = conn
-        .prepare("INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, ?, NULL)")
-        .map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.bind((1, folder.id)).map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.bind((2, folder.name.as_str())).map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.bind((3, folder.username.as_deref())).map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.bind((4, if folder.is_public { 1 } else { 0 })).map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.bind((5, display_order)).map_err(|e: sqlite::Error| e.to_string())?;
-    insert_stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+    conn.execute(
+        "INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, ?, NULL)",
+        rusqlite::params![folder.id, folder.name.as_str(), folder.username.as_deref(), if folder.is_public { 1 } else { 0 }, display_order],
+    ).map_err(|e| e.to_string())?;
     
     folder.display_order = display_order as i32;
     Ok(folder)
@@ -549,27 +562,30 @@ pub async fn cmd_create_folder(
 pub async fn delete_folder_inner(
     folder_id: i64,
     client: &grammers_client::Client,
-    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, Peer>>>,
+    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, PeerRef>>>,
 ) -> Result<bool, String> {
-    log::info!("Deleting folder/channel: {}", folder_id);
+    log::info!("Deleting/Leaving folder: {}", folder_id);
 
     let peer = resolve_peer(client, Some(folder_id), peer_cache).await?;
-    
-    let input_channel = match peer {
-        Peer::Channel(c) => {
-             let chan = &c.raw;
-             tl::enums::InputChannel::Channel(tl::types::InputChannel {
-                 channel_id: chan.id,
-                 access_hash: chan.access_hash.ok_or("No access hash for channel")?,
-              })
-        },
-        _ => return Err("Only channels (folders) can be deleted.".to_string()),
-    };
-    
-    client.invoke(&tl::functions::channels::DeleteChannel {
-        channel: input_channel,
-    }).await.map_err(|e| format!("Failed to delete channel: {}", e))?;
-    
+
+    let input_channel = tl::enums::InputChannel::from(peer);
+    match input_channel {
+        tl::enums::InputChannel::Channel(ref chan) => {
+            // To know if user is creator, we'd need to fetch full channel info.
+            // Attempt delete first, fall back to leave.
+            let _ = chan; // suppress unused warning
+            if let Err(e) = client.invoke(&tl::functions::channels::DeleteChannel {
+                channel: input_channel.clone(),
+            }).await {
+                log::warn!("DeleteChannel failed: {}. Falling back to LeaveChannel.", e);
+                client.invoke(&tl::functions::channels::LeaveChannel {
+                    channel: input_channel,
+                }).await.map_err(|err| format!("Failed to delete/leave channel: {}", err))?;
+            }
+        }
+        _ => return Err("Only channels or supergroups (folders) can be deleted/left.".to_string()),
+    }
+
     Ok(true)
 }
 
@@ -592,9 +608,7 @@ pub async fn cmd_delete_folder(
     
     // Delete from SQLite
     let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
-    let mut stmt = conn.prepare("DELETE FROM folder_metadata WHERE channel_id = ?").map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((1, folder_id)).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+    conn.execute("DELETE FROM folder_metadata WHERE channel_id = ?", rusqlite::params![folder_id]).map_err(|e| e.to_string())?;
     
     Ok(true)
 }
@@ -603,22 +617,16 @@ pub async fn rename_folder_inner(
     folder_id: i64,
     new_name: &str,
     client: &grammers_client::Client,
-    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, Peer>>>,
+    peer_cache: &Arc<tokio::sync::RwLock<HashMap<i64, PeerRef>>>,
 ) -> Result<bool, String> {
     log::info!("Renaming folder/channel: {} to {}", folder_id, new_name);
 
     let peer = resolve_peer(client, Some(folder_id), peer_cache).await?;
     
-    let input_channel = match peer {
-        Peer::Channel(c) => {
-             let chan = &c.raw;
-             tl::enums::InputChannel::Channel(tl::types::InputChannel {
-                 channel_id: chan.id,
-                 access_hash: chan.access_hash.ok_or("No access hash for channel")?,
-              })
-        },
-        _ => return Err("Only channels (folders) can be renamed.".to_string()),
-    };
+    let input_channel = tl::enums::InputChannel::from(peer);
+    if matches!(input_channel, tl::enums::InputChannel::Empty) {
+        return Err("Only channels (folders) can be renamed.".to_string());
+    }
     
     client.invoke(&tl::functions::channels::EditTitle {
         channel: input_channel,
@@ -635,6 +643,19 @@ pub async fn cmd_rename_folder(
     state: State<'_, TelegramState>,
     db_pool: State<'_, DbConnection>,
 ) -> Result<bool, String> {
+    // Check if a folder with the same name already exists (excluding this folder)
+    {
+        let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
+        let count: i64 = conn.query_row(
+            "SELECT count(*) FROM folder_metadata WHERE LOWER(name) = LOWER(?) AND channel_id != ?",
+            rusqlite::params![new_name.as_str(), folder_id],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        if count > 0 {
+            return Err("A folder with this name already exists".to_string());
+        }
+    }
+
     let client_opt = {
         state.client.lock().await.clone()
     };
@@ -648,10 +669,7 @@ pub async fn cmd_rename_folder(
     
     // Update SQLite
     let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
-    let mut stmt = conn.prepare("UPDATE folder_metadata SET name = ? WHERE channel_id = ?").map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((1, new_name.as_str())).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((2, folder_id)).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+    conn.execute("UPDATE folder_metadata SET name = ? WHERE channel_id = ?", rusqlite::params![new_name.as_str(), folder_id]).map_err(|e| e.to_string())?;
     
     Ok(true)
 }
@@ -666,15 +684,56 @@ struct ProgressPayload {
     speed_bytes_per_sec: u64,
 }
 
+struct UploadGuard {
+    state: TelegramState,
+}
+
+impl UploadGuard {
+    fn new(state: TelegramState) -> Self {
+        let count = state.active_uploads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if count == 1 {
+            log::info!("First upload started: starting foreground service");
+            crate::upload_service::start_foreground_service();
+        }
+        Self { state }
+    }
+}
+
+impl Drop for UploadGuard {
+    fn drop(&mut self) {
+        let count = self.state.active_uploads.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) - 1;
+        if count == 0 {
+            log::info!("All uploads finished: preparing to stop foreground service");
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                if state_clone.active_uploads.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                    log::info!("Debounce check passed: stopping foreground service");
+                    crate::upload_service::stop_foreground_service();
+                }
+            });
+        }
+    }
+}
+
 /// Async reader wrapper that tracks bytes read for progress reporting.
 /// Wraps a tokio File and counts how many bytes have been consumed.
 struct ProgressReader {
     inner: tokio::io::BufReader<tokio::fs::File>,
     bytes_read: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    limiter: Arc<std::sync::Mutex<super::TokenBucket>>,
+    delay: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    transfer_id: String,
+    cancelled_transfers: Arc<tokio::sync::RwLock<HashSet<String>>>,
 }
 
 impl ProgressReader {
-    async fn new(path: &str) -> Result<(Self, u64, std::sync::Arc<std::sync::atomic::AtomicU64>), String> {
+    async fn new(
+        path: &str,
+        limiter: Arc<std::sync::Mutex<super::TokenBucket>>,
+        transfer_id: String,
+        cancelled_transfers: Arc<tokio::sync::RwLock<HashSet<String>>>,
+    ) -> Result<(Self, u64, std::sync::Arc<std::sync::atomic::AtomicU64>), String> {
         let file = tokio::fs::File::open(path).await.map_err(|e| e.to_string())?;
         let metadata = file.metadata().await.map_err(|e| e.to_string())?;
         let size = metadata.len();
@@ -682,6 +741,10 @@ impl ProgressReader {
         let reader = Self {
             inner: tokio::io::BufReader::new(file),
             bytes_read: counter.clone(),
+            limiter,
+            delay: None,
+            transfer_id,
+            cancelled_transfers,
         };
         Ok((reader, size, counter))
     }
@@ -693,6 +756,47 @@ impl tokio::io::AsyncRead for ProgressReader {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
+        // 1. Instant cancellation check inside poll_read
+        if let Ok(cancelled) = self.cancelled_transfers.try_read() {
+            if cancelled.contains(&self.transfer_id) {
+                return std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Transfer cancelled",
+                )));
+            }
+        }
+
+        // 2. Poll sleep delay if active
+        if let Some(ref mut sleep) = self.delay {
+            match std::future::Future::poll(std::pin::Pin::new(sleep), cx) {
+                std::task::Poll::Ready(_) => {
+                    self.delay = None;
+                }
+                std::task::Poll::Pending => {
+                    return std::task::Poll::Pending;
+                }
+            }
+        }
+
+        // 3. Query the token bucket
+        let wait_dur = {
+            let mut bucket = self.limiter.lock().unwrap();
+            let amount = buf.remaining();
+            match bucket.consume(amount) {
+                Ok(()) => None,
+                Err(wait_dur) => Some(wait_dur),
+            }
+        };
+
+        if let Some(wait_dur) = wait_dur {
+            self.delay = Some(Box::pin(tokio::time::sleep(wait_dur)));
+            if let Some(ref mut sleep) = self.delay {
+                let _ = std::future::Future::poll(std::pin::Pin::new(sleep), cx);
+            }
+            return std::task::Poll::Pending;
+        }
+
+        // 4. Perform the read
         let before = buf.filled().len();
         let result = std::pin::Pin::new(&mut self.inner).poll_read(cx, buf);
         if let std::task::Poll::Ready(Ok(())) = &result {
@@ -796,6 +900,7 @@ async fn cmd_upload_file_inner(
 ) -> Result<String, String> {
 
     let size = tokio::fs::metadata(&path).await.map_err(|e| e.to_string())?.len();
+    let _guard = UploadGuard::new(state.inner().clone());
     bw_state.try_reserve_up(size)?;
 
     let tid = transfer_id.unwrap_or_default();
@@ -820,7 +925,12 @@ async fn cmd_upload_file_inner(
     }
 
     // Create progress-tracking reader
-    let (mut reader, file_size, bytes_counter) = ProgressReader::new(&path).await.map_err(|e| {
+    let (mut reader, file_size, bytes_counter) = ProgressReader::new(
+        &path,
+        state.upload_limiter.clone(),
+        tid.clone(),
+        state.cancelled_transfers.clone(),
+    ).await.map_err(|e| {
         bw_state.release_up(size);
         e
     })?;
@@ -917,17 +1027,23 @@ async fn cmd_upload_file_inner(
     let mut last_err = String::new();
 
     for attempt in 0..=max_retries {
-        match client.send_message(&peer, message.clone()).await {
-            Ok(_) => {
+        let send_fut = client.send_message(peer, message.clone());
+        match tokio::time::timeout(tokio::time::Duration::from_secs(30), send_fut).await {
+            Ok(Ok(_)) => {
                 // Bandwidth was already reserved by try_reserve_up at start
-        if !tid.is_empty() {
-            let _ = app_handle.emit("upload-progress", ProgressPayload {
-                id: tid, percent: 100, uploaded_bytes: size, total_bytes: size, speed_bytes_per_sec: 0,
-            });
-        }
-        return Ok("File uploaded successfully".to_string());
+                if !tid.is_empty() {
+                    let _ = app_handle.emit("upload-progress", ProgressPayload {
+                        id: tid, percent: 100, uploaded_bytes: size, total_bytes: size, speed_bytes_per_sec: 0,
+                    });
+                }
+                // Add randomized network jitter (100ms - 300ms) before returning success to mimic natural client delays
+                let jitter_ms = rand::rng().random_range(100..=300);
+                log::info!("Adding upload network jitter: {}ms", jitter_ms);
+                tokio::time::sleep(tokio::time::Duration::from_millis(jitter_ms)).await;
+
+                return Ok("File uploaded successfully".to_string());
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 let err = map_error(e);
                 log::warn!("send_message attempt {}/{}: {}", attempt + 1, max_retries + 1, err);
 
@@ -942,6 +1058,16 @@ async fn cmd_upload_file_inner(
                     }
                 }
 
+                last_err = err;
+                if attempt < max_retries {
+                    let delay = backoff_ms(attempt, base_ms, max_ms);
+                    log::info!("Retrying in {}ms...", delay);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+            }
+            Err(_) => {
+                let err = "Send message request timed out after 30 seconds".to_string();
+                log::warn!("send_message attempt {}/{}: {}", attempt + 1, max_retries + 1, err);
                 last_err = err;
                 if attempt < max_retries {
                     let delay = backoff_ms(attempt, base_ms, max_ms);
@@ -965,7 +1091,6 @@ pub async fn initiate_upload(
     bw_state: State<'_, Arc<BandwidthManager>>,
     net_config: State<'_, std::sync::Arc<NetworkConfig>>,
 ) -> Result<String, String> {
-    crate::upload_service::start_foreground_service();
     cmd_upload_file(
         path,
         folder_id,
@@ -997,7 +1122,7 @@ pub async fn cmd_rename_file(
     // Verify the message exists before attempting to edit it.
     // This avoids a cryptic MESSAGE_ID_INVALID RPC error when the message
     // was moved (forwarded → new ID) or deleted since the file list was loaded.
-    let messages = client.get_messages_by_id(&peer, &[message_id])
+    let messages = client.get_messages_by_id(peer, &[message_id])
         .await
         .map_err(|e| format!("Failed to fetch message for rename: {}", e))?;
     if messages.iter().flatten().next().is_none() {
@@ -1007,25 +1132,7 @@ pub async fn cmd_rename_file(
         ));
     }
 
-    let input_peer = match &peer {
-        Peer::User(u) => {
-            let (id, access_hash) = match &u.raw {
-                tl::enums::User::User(usr) => (usr.id, usr.access_hash.unwrap_or(0)),
-                tl::enums::User::Empty(usr) => (usr.id, 0),
-            };
-            tl::enums::InputPeer::User(tl::types::InputPeerUser {
-                user_id: id,
-                access_hash,
-            })
-        }
-        Peer::Channel(c) => {
-            tl::enums::InputPeer::Channel(tl::types::InputPeerChannel {
-                channel_id: c.raw.id,
-                access_hash: c.raw.access_hash.ok_or("No access hash for channel")?,
-            })
-        }
-        _ => return Err("Unsupported peer type".to_string()),
-    };
+    let input_peer = tl::enums::InputPeer::from(peer);
 
     client.invoke(&tl::functions::messages::EditMessage {
         peer: input_peer,
@@ -1039,6 +1146,7 @@ pub async fn cmd_rename_file(
         schedule_date: None,
         quick_reply_shortcut_id: None,
         schedule_repeat_period: None,
+        rich_message: None,
     }).await.map_err(|e| format!("Failed to rename file: {}", e))?;
 
     Ok(true)
@@ -1060,21 +1168,26 @@ pub async fn cmd_delete_file(
 
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
-    // Verify the message exists before attempting to delete it.
-    // This avoids a cryptic MESSAGE_ID_INVALID RPC error when the message
-    // was already moved or deleted since the file list was loaded.
-    let messages = client.get_messages_by_id(&peer, &[message_id])
-        .await
-        .map_err(|e| format!("Failed to fetch message for delete: {}", e))?;
-    if messages.iter().flatten().next().is_none() {
-        return Err(format!(
-            "Message {} not found in folder {:?}. The file may have already been moved or deleted. Please refresh the folder.",
-            message_id, folder_id
-        ));
+    // Directly attempt to delete the message on Telegram.
+    match client.delete_messages(peer, &[message_id]).await {
+        Ok(_) => {
+            // Also invalidate and remove from local message cache
+            let mut cache = state.message_cache.write().await;
+            cache.remove(&message_id);
+            Ok(true)
+        }
+        Err(e) => {
+            let err_msg = e.to_string();
+            // If the message is already gone/invalid, treat it as a success so local UI is updated.
+            if err_msg.contains("MESSAGE_ID_INVALID") {
+                let mut cache = state.message_cache.write().await;
+                cache.remove(&message_id);
+                Ok(true)
+            } else {
+                Err(err_msg)
+            }
+        }
     }
-
-    client.delete_messages(&peer, &[message_id]).await.map_err(|e| e.to_string())?;
-    Ok(true)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -1130,6 +1243,44 @@ pub async fn cmd_download_file(
     #[cfg(not(target_os = "android"))]
     let actual_save_path = save_path.clone();
 
+    // Fast Path: Check if file is available in local offline_storage
+    use tauri::Manager;
+    if let Ok(data_dir) = app_handle.path().app_data_dir() {
+        let offline_dir = data_dir.join("offline_storage");
+        if offline_dir.exists() {
+            let prefix = format!("{}_", message_id);
+            if let Ok(entries) = std::fs::read_dir(&offline_dir) {
+                for entry in entries.flatten() {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname.starts_with(&prefix) || fname == message_id.to_string() {
+                        let local_path = entry.path();
+                        if local_path.exists() && std::fs::metadata(&local_path).map(|m| m.len() > 0).unwrap_or(false) {
+                            let total_size = std::fs::metadata(&local_path).map(|m| m.len()).unwrap_or(0);
+                            log::info!("cmd_download_file: Serving offline file directly from disk: {:?}", local_path);
+                            
+                            let dst_path = std::path::Path::new(&actual_save_path);
+                            if local_path != dst_path {
+                                if let Some(parent) = dst_path.parent() {
+                                    let _ = std::fs::create_dir_all(parent);
+                                }
+                                if let Err(e) = std::fs::copy(&local_path, dst_path) {
+                                    log::error!("Failed to copy offline file to save_path: {}", e);
+                                }
+                            }
+                            
+                            if !tid.is_empty() {
+                                let _ = app_handle.emit("download-progress", ProgressPayload {
+                                    id: tid.clone(), percent: 100, uploaded_bytes: total_size, total_bytes: total_size, speed_bytes_per_sec: 0,
+                                });
+                            }
+                            return Ok("File served from local offline storage".to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
     if client_opt.is_none() { 
@@ -1142,7 +1293,7 @@ pub async fn cmd_download_file(
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
     // Use get_messages_by_id for efficient message lookup (same as server.rs)
-    let messages = client.get_messages_by_id(&peer, &[message_id]).await.map_err(|e| e.to_string())?;
+    let messages = client.get_messages_by_id(peer, &[message_id]).await.map_err(|e| e.to_string())?;
     
     let msg = messages.into_iter()
         .flatten()
@@ -1153,7 +1304,7 @@ pub async fn cmd_download_file(
         .ok_or_else(|| "No media in message".to_string())?;
 
     let expected_file_size = match &media {
-        Media::Document(d) => Some(d.size() as u64),
+        Media::Document(d) => Some(d.size().unwrap_or(0) as u64),
         _ => None,
     };
     let total_size = expected_file_size.unwrap_or(match &media {
@@ -1333,16 +1484,29 @@ pub async fn cmd_download_file(
                         if let Ok(j_cache_path) = env.new_string(&actual_save_path) {
                             if let Ok(j_file_name) = env.new_string(file_name) {
                                 if let Ok(j_mime_type) = env.new_string(mime_type) {
-                                    let call_res = env.call_static_method(
-                                        &main_class,
-                                        "saveFileToPublicDownloads",
-                                        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z",
-                                        &[
-                                            jni::objects::JValue::from(&j_cache_path),
-                                            jni::objects::JValue::from(&j_file_name),
-                                            jni::objects::JValue::from(&j_mime_type),
-                                        ],
-                                    );
+                                                                  let call_res = if let (Some(method_id), Some(main_class)) = (
+                                        crate::jni_cache::get_save_file_method(),
+                                        crate::jni_cache::get_main_activity_jclass(),
+                                    ) {
+                                        let method = unsafe { jni::objects::JMethodID::from_raw(method_id) };
+                                        unsafe {
+                                            env.call_static_method_unchecked(
+                                                &main_class,
+                                                method,
+                                                jni::signature::ReturnType::Primitive(jni::signature::Primitive::Boolean),
+                                                &[
+                                                    jni::objects::JValue::from(&j_cache_path).as_jni(),
+                                                    jni::objects::JValue::from(&j_file_name).as_jni(),
+                                                    jni::objects::JValue::from(&j_mime_type).as_jni(),
+                                                ],
+                                            )
+                                        }
+                                    } else {
+                                        Err(jni::errors::Error::MethodNotFound {
+                                            name: "saveFileToPublicDownloads".to_string(),
+                                            sig: "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z".to_string(),
+                                        })
+                                    };
                                     
                                     match call_res {
                                         Ok(val) => {
@@ -1403,14 +1567,21 @@ pub async fn cmd_move_files(
     let source_peer = resolve_peer(&client, source_folder_id, &state.peer_cache).await?;
     let target_peer = resolve_peer(&client, target_folder_id, &state.peer_cache).await?;
 
-    match client.forward_messages(&target_peer, &message_ids, &source_peer).await {
-        Ok(_) => {},
+    let forwarded = match client.forward_messages(target_peer, &message_ids, source_peer).await {
+        Ok(msgs) => msgs,
         Err(e) => return Err(format!("Forward failed: {}", e)),
-    }
+    };
     
-    match client.delete_messages(&source_peer, &message_ids).await {
+    match client.delete_messages(source_peer, &message_ids).await {
         Ok(_) => {},
-        Err(e) => return Err(format!("Delete original failed: {}", e)),
+        Err(e) => {
+            // Rollback: delete forwarded messages in target channel
+            let forwarded_ids: Vec<i32> = forwarded.into_iter().flatten().map(|m| m.id()).collect();
+            if !forwarded_ids.is_empty() {
+                let _ = client.delete_messages(target_peer, &forwarded_ids).await;
+            }
+            return Err(format!("Delete original failed: {}", e));
+        }
     }
 
     Ok(true)
@@ -1432,12 +1603,13 @@ pub async fn cmd_get_files(
     
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
-    let mut msgs = client.iter_messages(&peer);
+    let mut msgs = client.iter_messages(peer);
     let mut last_msg_id: Option<i32> = None;
     let mut safety_counter = 0;
     const MAX_FILES_LIMIT: usize = 50000; // Hard safety cap to prevent infinite loops (50,000 files)
     
     let mut chunk = Vec::new();
+    let mut local_messages = HashMap::new();
 
     while let Some(msg) = msgs.next().await.map_err(|e| e.to_string())? {
         // Prevent infinite loop if API returns same message ID
@@ -1448,22 +1620,66 @@ pub async fn cmd_get_files(
             }
         }
         last_msg_id = Some(current_msg_id);
+        local_messages.insert(current_msg_id, msg.clone());
 
         if let Some(doc) = msg.media() {
             let (name, size, mime, ext) = match doc {
                 Media::Document(d) => {
-                    let doc_name = d.name().to_string();
-                    // Prefer the message caption (set by rename via EditMessage) over the
-                    // document's built-in filename attribute, so renames persist across refreshes.
+                    let doc_name = d.name().unwrap_or("").to_string();
                     let caption = msg.text();
                     let display_name = if caption.is_empty() { doc_name.clone() } else { caption.to_string() };
-                    let s = d.size();
+                    let s = d.size().unwrap_or(0) as i64;
                     let m = d.mime_type().map(|s| s.to_string());
-                    // Extension always from the original document name for correct file-type icon
-                    let e = std::path::Path::new(&doc_name).extension().map(|os| os.to_str().unwrap_or("").to_string());
-                    (display_name, s, m, e)
+                    let e = std::path::Path::new(&display_name).extension().map(|os| os.to_str().unwrap_or("").to_string());
+
+                    let has_video_attr = d.raw.document.as_ref().and_then(|doc| {
+                        Some(std::matches!(doc, tl::enums::Document::Document(ref inner) if inner.attributes.iter().any(|a| std::matches!(a, tl::enums::DocumentAttribute::Video(_)))))
+                    }).unwrap_or(false);
+                    let has_audio_attr = d.raw.document.as_ref().and_then(|doc| {
+                        Some(std::matches!(doc, tl::enums::Document::Document(ref inner) if inner.attributes.iter().any(|a| std::matches!(a, tl::enums::DocumentAttribute::Audio(_)))))
+                    }).unwrap_or(false);
+
+                    let (final_mime, final_ext) = if has_video_attr {
+                        let ext = e.clone().filter(|ext| !ext.is_empty()).or_else(|| Some("mp4".into()));
+                        let mime = m.clone().filter(|m| !m.starts_with("application/")).or_else(|| Some("video/mp4".into()));
+                        (mime, ext)
+                    } else if has_audio_attr {
+                        let ext = e.clone().filter(|ext| !ext.is_empty()).or_else(|| Some("mp3".into()));
+                        let mime = m.clone().filter(|m| !m.starts_with("application/")).or_else(|| Some("audio/mpeg".into()));
+                        (mime, ext)
+                    } else {
+                        (m, e)
+                    };
+
+                    let mut final_name = display_name.trim().to_string();
+                    if final_name.is_empty() || final_name == "Unknown" {
+                        if has_video_attr {
+                            final_name = format!("video_{}.{}", msg.id(), final_ext.as_deref().unwrap_or("mp4"));
+                        } else if has_audio_attr {
+                            final_name = format!("audio_{}.{}", msg.id(), final_ext.as_deref().unwrap_or("mp3"));
+                        } else {
+                            final_name = format!("file_{}.{}", msg.id(), final_ext.as_deref().unwrap_or("bin"));
+                        }
+                    } else if !final_name.contains('.') {
+                        if let Some(ref ext) = final_ext {
+                            if !ext.is_empty() {
+                                final_name = format!("{}.{}", final_name, ext);
+                            }
+                        }
+                    }
+
+                    (final_name, s, final_mime, final_ext)
                 },
-                Media::Photo(_) => ("Photo.jpg".to_string(), 0, Some("image/jpeg".into()), Some("jpg".into())),
+                Media::Photo(p) => {
+                    let photo_size = p.thumbs()
+                        .iter()
+                        .filter(|t| t.size() > 0)
+                        .max_by_key(|t| t.size())
+                        .map(|t| t.size() as usize)
+                        .unwrap_or(0);
+                    let display_name = format!("photo_{}.jpg", msg.id());
+                    (display_name, photo_size as i64, Some("image/jpeg".into()), Some("jpg".into()))
+                }
                 _ => ("Unknown".to_string(), 0, None, None),
             };
             chunk.push(FileMetadata {
@@ -1492,6 +1708,15 @@ pub async fn cmd_get_files(
         }
     }
 
+    // Merge into global state message cache
+    {
+        let mut cache = state.message_cache.write().await;
+        if cache.len() > 10000 {
+            cache.clear();
+        }
+        cache.extend(local_messages);
+    }
+
     if !chunk.is_empty() {
         #[derive(Clone, serde::Serialize)]
         struct FolderLoadPayload {
@@ -1508,30 +1733,76 @@ pub async fn cmd_get_files(
     Ok(Vec::new())
 }
 
-/// Extract FileMetadata entries from a list of Telegram messages returned by SearchGlobal.
-fn extract_search_files(msgs: &[tl::enums::Message]) -> Vec<FileMetadata> {
+/// Extract FileMetadata entries from a list of Telegram messages returned by SearchGlobal,
+/// filtering to only include files belonging to active folder channels or Saved Messages.
+fn extract_search_files(
+    msgs: &[tl::enums::Message],
+    active_channels: &std::collections::HashSet<i64>,
+    my_user_id: i64,
+) -> Vec<FileMetadata> {
     let mut files = Vec::new();
     for msg in msgs {
         if let tl::enums::Message::Message(m) = msg {
+            let folder_id = match &m.peer_id {
+                tl::enums::Peer::Channel(c) => Some(c.channel_id),
+                tl::enums::Peer::User(u) => Some(u.user_id),
+                tl::enums::Peer::Chat(c) => Some(c.chat_id),
+            };
+
+            let is_valid = match folder_id {
+                Some(id) => active_channels.contains(&id) || id == my_user_id,
+                None => false,
+            };
+            if !is_valid {
+                continue;
+            }
+
             if let Some(tl::enums::MessageMedia::Document(d)) = &m.media {
                 if let Some(tl::enums::Document::Document(doc)) = &d.document {
                     let doc_name = doc.attributes.iter().find_map(|a| match a {
                         tl::enums::DocumentAttribute::Filename(f) => Some(f.file_name.clone()),
                         _ => None
                     }).unwrap_or("Unknown".to_string());
-                    // Prefer the message caption over the built-in document filename
                     let name = if m.message.is_empty() { doc_name.clone() } else { m.message.clone() };
                     let size = doc.size as u64;
                     let mime = doc.mime_type.clone();
-                    let ext = std::path::Path::new(&doc_name).extension().map(|os| os.to_str().unwrap_or("").to_string());
-                    let folder_id = match &m.peer_id {
-                        tl::enums::Peer::Channel(c) => Some(c.channel_id),
-                        tl::enums::Peer::User(u) => Some(u.user_id),
-                        tl::enums::Peer::Chat(c) => Some(c.chat_id),
+                    let ext = std::path::Path::new(&name).extension().map(|os| os.to_str().unwrap_or("").to_string());
+
+                    let has_video_attr = doc.attributes.iter().any(|a| std::matches!(a, tl::enums::DocumentAttribute::Video(_)));
+                    let has_audio_attr = doc.attributes.iter().any(|a| std::matches!(a, tl::enums::DocumentAttribute::Audio(_)));
+
+                    let (final_mime, final_ext) = if has_video_attr {
+                        let ext = ext.clone().filter(|ext| !ext.is_empty()).or_else(|| Some("mp4".into()));
+                        let mime = if !mime.starts_with("application/") { Some(mime) } else { Some("video/mp4".into()) };
+                        (mime, ext)
+                    } else if has_audio_attr {
+                        let ext = ext.clone().filter(|ext| !ext.is_empty()).or_else(|| Some("mp3".into()));
+                        let mime = if !mime.starts_with("application/") { Some(mime) } else { Some("audio/mpeg".into()) };
+                        (mime, ext)
+                    } else {
+                        (Some(mime), ext)
                     };
+
+                    let mut final_name = name.trim().to_string();
+                    if final_name.is_empty() || final_name == "Unknown" {
+                        if has_video_attr {
+                            final_name = format!("video_{}.{}", m.id, final_ext.as_deref().unwrap_or("mp4"));
+                        } else if has_audio_attr {
+                            final_name = format!("audio_{}.{}", m.id, final_ext.as_deref().unwrap_or("mp3"));
+                        } else {
+                            final_name = format!("file_{}.{}", m.id, final_ext.as_deref().unwrap_or("bin"));
+                        }
+                    } else if !final_name.contains('.') {
+                        if let Some(ref ext) = final_ext {
+                            if !ext.is_empty() {
+                                final_name = format!("{}.{}", final_name, ext);
+                            }
+                        }
+                    }
+
                     files.push(FileMetadata {
-                        id: m.id as i64, folder_id, name, size,
-                        mime_type: Some(mime), file_ext: ext,
+                        id: m.id as i64, folder_id, name: final_name, size,
+                        mime_type: final_mime, file_ext: final_ext,
                         created_at: m.date.to_string(), icon_type: "file".into()
                     });
                 }
@@ -1545,6 +1816,7 @@ fn extract_search_files(msgs: &[tl::enums::Message]) -> Vec<FileMetadata> {
 pub async fn cmd_search_global(
     query: String,
     state: State<'_, TelegramState>,
+    db_pool: State<'_, DbConnection>,
 ) -> Result<Vec<FileMetadata>, String> {
     let client_opt = { state.client.lock().await.clone() };
     #[cfg(debug_assertions)]
@@ -1553,6 +1825,25 @@ pub async fn cmd_search_global(
     }
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
     
+    // Query active folders from SQLite
+    let active_channels = {
+        let conn = db_pool.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT channel_id FROM folder_metadata")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0)).map_err(|e| e.to_string())?;
+        let mut active = std::collections::HashSet::new();
+        for r in rows {
+            if let Ok(cid) = r {
+                active.insert(cid);
+            }
+        }
+        active
+    };
+
+    let me = client.get_me().await.map_err(map_error)?;
+    let my_user_id = me.raw.id();
+
     log::info!("Searching global for: {}", query);
 
     let result = client.invoke(&tl::functions::messages::SearchGlobal {
@@ -1568,11 +1859,12 @@ pub async fn cmd_search_global(
         broadcasts_only: false,
         groups_only: false,
         users_only: false,
+        community: None,
     }).await.map_err(map_error)?;
 
     let files = match result {
-        tl::enums::messages::Messages::Messages(msgs) => extract_search_files(&msgs.messages),
-        tl::enums::messages::Messages::Slice(msgs) => extract_search_files(&msgs.messages),
+        tl::enums::messages::Messages::Messages(msgs) => extract_search_files(&msgs.messages, &active_channels, my_user_id),
+        tl::enums::messages::Messages::Slice(msgs) => extract_search_files(&msgs.messages, &active_channels, my_user_id),
         _ => Vec::new(),
     };
 
@@ -1599,11 +1891,15 @@ pub async fn cmd_scan_folders(
     log::info!("Starting Folder Scan...");
 
     while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
+        use grammers_client::peer::Peer as GPeer;
         // Populate peer cache for every dialog we encounter (free priming)
         match &dialog.peer {
-            Peer::Channel(c) => {
+            GPeer::Channel(c) => {
                 let id = c.raw.id;
-                discovered.insert(id, dialog.peer.clone());
+                // Cache the PeerRef for future fast lookups
+                if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                    discovered.insert(id, peer_ref);
+                }
 
                 let name = c.raw.title.clone();
                 let access_hash = c.raw.access_hash.unwrap_or(0);
@@ -1616,7 +1912,7 @@ pub async fn cmd_scan_folders(
                     let display_name = name.replace(" [TD]", "").replace(" [td]", "").replace("[TD]", "").replace("[td]", "").trim().to_string();
                     let username = c.raw.username.clone();
                     let is_public = username.is_some();
-                    folders.push(FolderMetadata { id, name: display_name, parent_id: None, username, is_public, group_id: None, display_order: 0 });
+                    folders.push(FolderMetadata { id, name: display_name, parent_id: None, username, is_public, is_owned: c.raw.creator, group_id: None, display_order: 0, participants_count: None });
                     continue; 
                 }
 
@@ -1631,22 +1927,59 @@ pub async fn cmd_scan_folders(
                         channel: input_chan,
                     }).await {
                         Ok(tl::enums::messages::ChatFull::Full(f)) => {
-                            if let tl::enums::ChatFull::Full(cf) = f.full_chat {
-                                 if cf.about.contains("[telegram-drive-folder]") {
-                                     log::info!(" -> MATCH via About: {}", name);
-                                     let username = c.raw.username.clone();
-                                     let is_public = username.is_some();
-                                     folders.push(FolderMetadata { id, name: name.clone(), parent_id: None, username, is_public, group_id: None, display_order: 0 });
-                                 }
+                            match f.full_chat {
+                                tl::enums::ChatFull::ChannelFull(cf) => {
+                                    if cf.about.contains("[telegram-drive-folder]") {
+                                        log::info!(" -> MATCH via ChannelFull About: {}", name);
+                                        let username = c.raw.username.clone();
+                                        let is_public = username.is_some();
+                                        let participants_count = cf.participants_count;
+                                        folders.push(FolderMetadata {
+                                            id,
+                                            name: name.clone(),
+                                            parent_id: None,
+                                            username,
+                                            is_public,
+                                            is_owned: c.raw.creator,
+                                            group_id: None,
+                                            display_order: 0,
+                                            participants_count,
+                                        });
+                                    }
+                                }
+                                tl::enums::ChatFull::Full(cf) => {
+                                    if cf.about.contains("[telegram-drive-folder]") {
+                                        log::info!(" -> MATCH via Full About: {}", name);
+                                        let username = c.raw.username.clone();
+                                        let is_public = username.is_some();
+                                        folders.push(FolderMetadata {
+                                            id,
+                                            name: name.clone(),
+                                            parent_id: None,
+                                            username,
+                                            is_public,
+                                            is_owned: c.raw.creator,
+                                            group_id: None,
+                                            display_order: 0,
+                                            participants_count: None,
+                                        });
+                                    }
+                                }
+                                tl::enums::ChatFull::CommunityFull(_) => {
+                                    // Community chats are not folder candidates
+                                }
                             }
                         },
                         Err(e) => log::warn!(" -> Failed to get full info: {}", e),
                     }
                 }
             },
-            Peer::User(u) => {
-                discovered.insert(u.raw.id(), dialog.peer.clone());
-                log::debug!("[SCAN] Cached User Peer: {}", u.raw.id());
+            GPeer::User(u) => {
+                let uid = u.raw.id();
+                if let Ok(Some(peer_ref)) = dialog.peer.to_ref().await {
+                    discovered.insert(uid, peer_ref);
+                }
+                log::debug!("[SCAN] Cached User Peer: {}", uid);
             },
             peer => {
                 log::debug!("[SCAN] Skipped Peer: {:?}", peer);
@@ -1666,6 +1999,49 @@ pub async fn cmd_scan_folders(
     let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
     let enriched = crate::commands::folder_groups::get_enriched_folders_internal(&conn, folders)?;
     Ok(enriched)
+}
+
+#[tauri::command]
+pub async fn cmd_get_total_files_size(
+    state: State<'_, TelegramState>,
+    db_pool: State<'_, DbConnection>,
+) -> Result<u64, String> {
+    let client_opt = { state.client.lock().await.clone() };
+    if client_opt.is_none() {
+        return Ok(0);
+    }
+    let client = client_opt.unwrap();
+
+    let mut total_size = 0u64;
+
+    // 1. Get all folders from DB
+    let folders = crate::commands::folder_groups::cmd_get_enriched_folders(db_pool).await
+        .map_err(|e| e.to_string())?;
+
+    // 2. We want to scan the folders plus the root "Saved Messages" (None)
+    let mut folder_ids = vec![None];
+    for f in folders {
+        folder_ids.push(Some(f.id));
+    }
+
+    // 3. For each folder, sum the document sizes
+    for f_id in folder_ids {
+        if let Ok(peer) = resolve_peer(&client, f_id, &state.peer_cache).await {
+            let mut msgs = client.iter_messages(peer);
+            while let Some(msg) = msgs.next().await.unwrap_or(None) {
+                if let Some(doc) = msg.media() {
+                    match doc {
+                        Media::Document(d) => {
+                            total_size += d.size().unwrap_or(0) as u64;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(total_size)
 }
 
 /// Zip a folder's contents into a temp file and return the path.
@@ -1783,15 +2159,17 @@ pub async fn cmd_toggle_folder_visibility(
             parent_id: None,
             username: if make_public { desired_username } else { None },
             is_public: make_public,
+            is_owned: true,
             group_id: None,
             display_order: 0,
+            participants_count: None,
         }
     } else {
         let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
         let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
-        let (channel_id, access_hash) = match &peer {
-            Peer::Channel(c) => (c.raw.id, c.raw.access_hash.ok_or("No access hash for channel")?),
+        let (channel_id, access_hash) = match tl::enums::InputPeer::from(peer) {
+            tl::enums::InputPeer::Channel(c) => (c.channel_id, c.access_hash),
             _ => return Err("Only channels (folders) can be toggled.".to_string()),
         };
 
@@ -1801,16 +2179,20 @@ pub async fn cmd_toggle_folder_visibility(
         });
 
         // Extract channel name from the resolved peer for the return value
-        let channel_name = match &peer {
-            Peer::Channel(c) => {
-                c.raw.title
-                    .replace(" [TD]", "")
-                    .replace(" [td]", "")
-                    .trim()
-                    .to_string()
+        let mut channel_name = "Folder".to_string();
+        let mut dialogs = client.iter_dialogs();
+        while let Some(dialog) = dialogs.next().await.ok().flatten() {
+            if let Peer::Channel(ref c) = dialog.peer {
+                if c.raw.id == channel_id {
+                    channel_name = c.raw.title
+                        .replace(" [TD]", "")
+                        .replace(" [td]", "")
+                        .trim()
+                        .to_string();
+                    break;
+                }
             }
-            _ => "Folder".to_string(),
-        };
+        }
 
         if make_public {
             // Generate a username from the desired_username or channel title.
@@ -1900,8 +2282,10 @@ pub async fn cmd_toggle_folder_visibility(
                 parent_id: None,
                 username: Some(username),
                 is_public: true,
+                is_owned: true,
                 group_id: None,
                 display_order: 0,
+                participants_count: None,
             }
         } else {
             // Make private: remove username
@@ -1920,30 +2304,28 @@ pub async fn cmd_toggle_folder_visibility(
                 parent_id: None,
                 username: None,
                 is_public: false,
+                is_owned: true,
                 group_id: None,
                 display_order: 0,
+                participants_count: None,
             }
         }
     };
 
-    // Update SQLite cache
+    // Update SQLite
     let conn = db_pool.lock().map_err(|_| "DB poisoned".to_string())?;
-    let mut stmt = conn
-        .prepare("UPDATE folder_metadata SET username = ?, is_public = ? WHERE channel_id = ?")
-        .map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((1, folder.username.as_deref())).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((2, if folder.is_public { 1 } else { 0 })).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.bind((3, folder.id)).map_err(|e: sqlite::Error| e.to_string())?;
-    stmt.next().map_err(|e: sqlite::Error| e.to_string())?;
+    conn.execute(
+        "UPDATE folder_metadata SET username = ?, is_public = ? WHERE channel_id = ?",
+        rusqlite::params![folder.username.as_deref(), if folder.is_public { 1 } else { 0 }, folder.id]
+    ).map_err(|e| e.to_string())?;
 
-    // Retrieve group_id and display_order from DB to ensure they are returned correctly
-    let mut fm_stmt = conn
-        .prepare("SELECT group_id, display_order FROM folder_metadata WHERE channel_id = ?")
-        .map_err(|e: sqlite::Error| e.to_string())?;
-    fm_stmt.bind((1, folder.id)).map_err(|e: sqlite::Error| e.to_string())?;
-    if let sqlite::State::Row = fm_stmt.next().map_err(|e: sqlite::Error| e.to_string())? {
-        folder.group_id = fm_stmt.read::<Option<i64>, _>("group_id").ok().flatten().map(|id| id as i32);
-        folder.display_order = fm_stmt.read::<i64, _>("display_order").map_err(|e: sqlite::Error| e.to_string())? as i32;
+    if let Ok((group_id, display_order)) = conn.query_row(
+        "SELECT group_id, display_order FROM folder_metadata WHERE channel_id = ?",
+        rusqlite::params![folder.id],
+        |row| Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?))
+    ) {
+        folder.group_id = group_id.map(|id| id as i32);
+        folder.display_order = display_order as i32;
     }
 
     Ok(folder)
@@ -1980,16 +2362,22 @@ pub async fn cmd_export_folder_invite(
     let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
 
     let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
-    let (channel_id, access_hash) = match &peer {
-        Peer::Channel(c) => (c.raw.id, c.raw.access_hash.ok_or("No access hash for channel")?),
+    let (channel_id, access_hash) = match tl::enums::InputPeer::from(peer) {
+        tl::enums::InputPeer::Channel(c) => (c.channel_id, c.access_hash),
         _ => return Err("Only channels (folders) can have invite links.".to_string()),
     };
 
-    // Check if channel already has a public username (use the resolved peer directly)
-    let username: Option<String> = match &peer {
-        Peer::Channel(c) => c.raw.username.clone(),
-        _ => None,
-    };
+    // Check if channel already has a public username
+    let mut username: Option<String> = None;
+    let mut dialogs = client.iter_dialogs();
+    while let Some(dialog) = dialogs.next().await.ok().flatten() {
+        if let Peer::Channel(ref c) = dialog.peer {
+            if c.raw.id == channel_id {
+                username = c.raw.username.clone();
+                break;
+            }
+        }
+    }
 
     if let Some(ref uname) = username {
         // Public channel: return the t.me/username link
@@ -2051,6 +2439,7 @@ pub async fn cmd_upload_from_url(
     bw_state: State<'_, Arc<BandwidthManager>>,
     net_config: State<'_, std::sync::Arc<NetworkConfig>>,
 ) -> Result<String, String> {
+    let _guard = UploadGuard::new(state.inner().clone());
     let mut client_builder = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::limited(10));
@@ -2405,7 +2794,12 @@ pub async fn cmd_upload_from_url(
         total_bytes: actual_size,
     });
 
-    let (mut reader, file_size, bytes_counter) = match ProgressReader::new(&temp_file_str).await {
+    let (mut reader, file_size, bytes_counter) = match ProgressReader::new(
+        &temp_file_str,
+        state.upload_limiter.clone(),
+        transfer_id.clone(),
+        state.cancelled_transfers.clone(),
+    ).await {
         Ok(res) => res,
         Err(e) => {
             bw_state.release_up(actual_size);
@@ -2498,10 +2892,10 @@ pub async fn cmd_upload_from_url(
                 log::info!("Aborting remote upload task for transfer ID: {}", transfer_id);
                 upload_task.abort();
                 state.cancelled_transfers.write().await.remove(&transfer_id);
-                progress_task.abort();
                 bw_state.release_up(actual_size);
+                progress_task.abort();
                 let _ = tokio::fs::remove_file(&temp_file_path).await;
-                return Err("Transfer cancelled".to_string());
+                return Err("Upload cancelled by user".to_string());
             }
         }
     };
@@ -2527,7 +2921,7 @@ pub async fn cmd_upload_from_url(
     let mut send_success = false;
 
     for attempt in 0..=max_retries {
-        match client.send_message(&peer, message.clone()).await {
+        match client.send_message(peer.clone(), message.clone()).await {
             Ok(_) => {
                 send_success = true;
                 break;
@@ -2565,9 +2959,204 @@ pub async fn cmd_upload_from_url(
             uploaded_bytes: actual_size,
             total_bytes: actual_size,
         });
+        // Add randomized network jitter (100ms - 300ms) before returning success to mimic natural client delays
+        let jitter_ms = rand::rng().random_range(100..=300);
+        log::info!("Adding remote upload network jitter: {}ms", jitter_ms);
+        tokio::time::sleep(tokio::time::Duration::from_millis(jitter_ms)).await;
+
         Ok("File uploaded successfully".to_string())
     } else {
         bw_state.release_up(actual_size);
         Err(format!("Upload failed after {} attempts: {}", max_retries + 1, last_err))
     }
 }
+
+#[tauri::command]
+pub fn cmd_file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct FolderParticipantInfo {
+    pub user_id: i64,
+    pub first_name: String,
+    pub last_name: Option<String>,
+    pub username: Option<String>,
+    pub joined_date: i64,
+    pub is_creator: bool,
+}
+
+#[tauri::command]
+pub async fn cmd_get_folder_participants(
+    folder_id: i64,
+    state: State<'_, TelegramState>,
+) -> Result<Vec<FolderParticipantInfo>, String> {
+    let client_opt = {
+        state.client.lock().await.clone()
+    };
+    
+    #[cfg(debug_assertions)]
+    if client_opt.is_none() {
+        log::info!("[MOCK] Get participants for folder {}", folder_id);
+        return Ok(vec![
+            FolderParticipantInfo {
+                user_id: 12345,
+                first_name: "Alice".to_string(),
+                last_name: Some("Smith".to_string()),
+                username: Some("alicesmith".to_string()),
+                joined_date: chrono::Utc::now().timestamp() - 86400 * 3,
+                is_creator: false,
+            },
+            FolderParticipantInfo {
+                user_id: 67890,
+                first_name: "Bob".to_string(),
+                last_name: None,
+                username: Some("bob_t".to_string()),
+                joined_date: chrono::Utc::now().timestamp() - 3600 * 5,
+                is_creator: false,
+            },
+        ]);
+    }
+    
+    let client = client_opt.ok_or_else(|| "Client not connected".to_string())?;
+    
+    let peer = resolve_peer(&client, Some(folder_id), &state.peer_cache).await?;
+    let channel = match tl::enums::InputPeer::from(peer) {
+        tl::enums::InputPeer::Channel(c) => tl::enums::InputChannel::Channel(tl::types::InputChannel {
+            channel_id: c.channel_id,
+            access_hash: c.access_hash,
+        }),
+        _ => return Err("Only channels (folders) have participants.".to_string()),
+    };
+
+    let response = client
+        .invoke(&tl::functions::channels::GetParticipants {
+            channel,
+            filter: tl::enums::ChannelParticipantsFilter::ChannelParticipantsRecent,
+            offset: 0,
+            limit: 100,
+            hash: 0,
+        })
+        .await
+        .map_err(|e| format!("Failed to get participants: {}", e))?;
+
+    let mut participants_info = Vec::new();
+
+    match response {
+        tl::enums::channels::ChannelParticipants::Participants(p) => {
+            let mut user_map = std::collections::HashMap::new();
+            for user_enum in p.users {
+                if let tl::enums::User::User(u) = user_enum {
+                    user_map.insert(u.id, u);
+                }
+            }
+
+            for p_enum in p.participants {
+                let (user_id, joined_date, is_creator) = match p_enum {
+                    tl::enums::ChannelParticipant::Participant(part) => {
+                        (part.user_id, part.date, false)
+                    }
+                    tl::enums::ChannelParticipant::Creator(part) => {
+                        (part.user_id, 0, true)
+                    }
+                    tl::enums::ChannelParticipant::Admin(part) => {
+                        (part.user_id, part.date, false)
+                    }
+                    _ => continue,
+                };
+
+                if let Some(user) = user_map.get(&user_id) {
+                    participants_info.push(FolderParticipantInfo {
+                        user_id,
+                        first_name: user.first_name.clone().unwrap_or_default(),
+                        last_name: user.last_name.clone(),
+                        username: user.username.clone(),
+                        joined_date: joined_date as i64,
+                        is_creator,
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(participants_info)
+}
+
+#[tauri::command]
+pub async fn cmd_get_offline_dir(app_handle: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let offline_dir = data_dir.join("offline_storage");
+    if !offline_dir.exists() {
+        let _ = std::fs::create_dir_all(&offline_dir);
+    }
+    Ok(offline_dir.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_check_offline_file(
+    app_handle: tauri::AppHandle,
+    file_id: i64,
+    _file_name: String,
+) -> Result<Option<String>, String> {
+    use tauri::Manager;
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let offline_dir = data_dir.join("offline_storage");
+    if !offline_dir.exists() {
+        return Ok(None);
+    }
+    
+    let prefix = format!("{}_", file_id);
+    if let Ok(entries) = std::fs::read_dir(&offline_dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.starts_with(&prefix) || fname == file_id.to_string() {
+                let p = entry.path();
+                if p.exists() && std::fs::metadata(&p).map(|m| m.len() > 0).unwrap_or(false) {
+                    return Ok(Some(p.to_string_lossy().to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn cmd_delete_offline_file(
+    app_handle: tauri::AppHandle,
+    file_id: i64,
+    _file_name: String,
+) -> Result<bool, String> {
+    use tauri::Manager;
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
+    let offline_dir = data_dir.join("offline_storage");
+    if !offline_dir.exists() {
+        return Ok(false);
+    }
+    
+    let prefix = format!("{}_", file_id);
+    let mut deleted = false;
+    if let Ok(entries) = std::fs::read_dir(&offline_dir) {
+        for entry in entries.flatten() {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if fname.starts_with(&prefix) || fname == file_id.to_string() {
+                let _ = std::fs::remove_file(entry.path());
+                deleted = true;
+            }
+        }
+    }
+
+    Ok(deleted)
+}
+

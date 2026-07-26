@@ -18,15 +18,10 @@ pub struct StreamInfo {
 /// never hardcoding the port.
 #[tauri::command]
 pub fn cmd_get_stream_info(config: State<'_, StreamConfig>) -> StreamInfo {
-    // Always use "localhost" on all platforms.
-    // "localhost" is treated as a secure context by all major browser
-    // engines (Chromium/WebView2, WebKit) and is exempt from Mixed Content
-    // blocking.  This is critical on Windows where Tauri v2 serves the
-    // frontend from https://tauri.localhost — fetching http://127.0.0.1
-    // from an HTTPS origin triggers a Mixed Content block in WebView2.
-    // The server binds exclusively to 127.0.0.1, so name resolution
-    // differences between platforms are not a concern.
-    let host = "localhost";
+    // Match the server's IPv4-only bind address exactly. Using `localhost`
+    // can resolve to ::1 first on some machines, leaving the preview request
+    // unable to reach a server that is listening only on 127.0.0.1.
+    let host = "127.0.0.1";
 
     StreamInfo {
         token: config.token.clone(),

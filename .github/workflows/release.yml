@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags like v1.0.0, v1.0.1
+  workflow_dispatch: # Allows 1-click manual trigger from GitHub Actions Web UI
 
 jobs:
   create-release:
@@ -13,11 +14,17 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       
-      - name: Get version from tag
+      - name: Get version
         id: get_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          else
+            VERSION=$(node -p "require('./app/package.json').version")
+            echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Verify tag matches app version
         shell: node {0}
@@ -51,10 +58,22 @@ jobs:
         id: changelog
         run: |
           VERSION="${{ steps.get_version.outputs.VERSION }}"
+          REPO="${{ github.repository }}"
+
+          DOWNLOAD_TABLE="### 🚀 Direct Download Installers
+
+| Platform | Recommended Installer | Alternative |
+|:---|:---|:---|
+| 🪟 **Windows** | [📥 Download Setup (.exe)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64-setup.exe) | [.msi Installer](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64_en-US.msi) |
+| 🍏 **macOS (Intel)** | [📥 Download Mac Intel (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64.dmg) | - |
+| 🍏 **macOS (Apple Silicon)** | [📥 Download Mac M1/M2/M3 (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_aarch64.dmg) | - |
+| 🐧 **Linux** | [📥 Download AppImage](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.AppImage) | [.deb Package](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.deb) |
+
+---
+"
 
           if [ -f CHANGELOG.md ]; then
-            # Prefer the notes for the tagged version; fall back to the first changelog block.
-            BODY=$(awk -v version="$VERSION" '
+            CHANGELOG_BODY=$(awk -v version="$VERSION" '
               $0 ~ "^## \\[" version "\\]" { capture=1; matched=1; next }
               /^## \[/ && capture { exit }
               capture { print; next }
@@ -63,99 +82,77 @@ jobs:
               fallback_seen { print }
             ' CHANGELOG.md)
           else
-            BODY="Release v$VERSION"
+            CHANGELOG_BODY="Release v$VERSION"
           fi
 
-          if [ -z "$BODY" ]; then
-            BODY="Release v$VERSION"
+          if [ -z "$CHANGELOG_BODY" ]; then
+            CHANGELOG_BODY="Release v$VERSION"
           fi
+
+          FULL_BODY="${DOWNLOAD_TABLE}
+${CHANGELOG_BODY}"
 
           # Escape for GitHub Actions output
           echo "BODY<<EOF" >> $GITHUB_OUTPUT
-          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "$FULL_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Create Release
+      - name: Create release
         id: create-release
-        uses: actions/github-script@v9
-        env:
-          RELEASE_BODY: ${{ steps.changelog.outputs.BODY }}
-          RELEASE_VERSION: ${{ steps.get_version.outputs.VERSION }}
+        uses: actions/github-script@v7
         with:
           script: |
-            const tag = `v${process.env.RELEASE_VERSION}`;
-            try {
-              const { data: existingRelease } = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: tag
-              });
-              await github.rest.repos.updateRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: existingRelease.id,
-                body: process.env.RELEASE_BODY,
-                draft: true
-              });
-              console.log(`Updated existing release for tag ${tag} (ID: ${existingRelease.id})`);
-              return existingRelease.id;
-            } catch (err) {
-              if (err.status === 404) {
-                const { data: newRelease } = await github.rest.repos.createRelease({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag_name: tag,
-                  name: `Telegram Drive v${process.env.RELEASE_VERSION}`,
-                  body: process.env.RELEASE_BODY,
-                  draft: true,
-                  prerelease: false
-                });
-                console.log(`Created new release for tag ${tag} (ID: ${newRelease.id})`);
-                return newRelease.id;
-              } else {
-                throw err;
-              }
-            }
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: `v${process.env.VERSION}`,
+              name: `v${process.env.VERSION}`,
+              body: process.env.BODY,
+              draft: true,
+              prerelease: false
+            });
+            return data.id;
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          BODY: ${{ steps.changelog.outputs.BODY }}
 
   build-tauri:
     needs: create-release
-    permissions:
-      contents: write
     strategy:
       fail-fast: false
       matrix:
         include:
           # Windows
           - platform: windows-latest
-            args: ''
+            args: '--locked'
             target: ''
           
           # Linux
           - platform: ubuntu-22.04
-            args: ''
+            args: '--locked'
             target: ''
             
           # macOS Intel
           - platform: macos-latest
-            args: '--target x86_64-apple-darwin'
+            args: '--target x86_64-apple-darwin --locked'
             target: 'x86_64-apple-darwin'
           
           # macOS Apple Silicon
           - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
+            args: '--target aarch64-apple-darwin --locked'
             target: 'aarch64-apple-darwin'
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
         with:
           node-version: 20
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master
         with:
           targets: ${{ matrix.target }}
 
@@ -176,7 +173,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: app
-        run: npm install
+        run: npm ci
 
       - name: Prepare Tauri signing key
         shell: node {0}
@@ -348,20 +345,6 @@ jobs:
 
           echo "::notice::AppImage patched successfully for cross-distro EGL compatibility"
 
-  publish-release:
-    needs: [create-release, build-tauri]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Publish Release
-        uses: actions/github-script@v9
-        env:
-          release_id: ${{ needs.create-release.outputs.release_id }}
-        with:
-          script: |
-            github.rest.repos.updateRelease({
-              owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: process.env.release_id,
               draft: false,

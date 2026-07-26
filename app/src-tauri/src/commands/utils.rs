@@ -1,12 +1,12 @@
 use grammers_client::Client;
-use grammers_client::types::Peer;
+use grammers_session::types::PeerRef;
 use tauri::State;
 use crate::bandwidth::BandwidthManager;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Resolve a folder_id to a Telegram Peer, using the cache for O(1) lookups.
+/// Resolve a folder_id to a Telegram PeerRef, using the cache for O(1) lookups.
 ///
 /// - `folder_id == None` → returns the user's own peer (Saved Messages)
 /// - Cache hit → returns immediately without any network call
@@ -14,33 +14,50 @@ use tokio::sync::RwLock;
 pub async fn resolve_peer(
     client: &Client,
     folder_id: Option<i64>,
-    peer_cache: &Arc<RwLock<HashMap<i64, Peer>>>,
-) -> Result<Peer, String> {
+    peer_cache: &Arc<RwLock<HashMap<i64, PeerRef>>>,
+) -> Result<PeerRef, String> {
+    // Treat virtual SAVED_MESSAGES_ID (-999) as None (Saved Messages / root folder)
+    let folder_id = match folder_id {
+        Some(-999) => None,
+        other => other,
+    };
+
     if let Some(fid) = folder_id {
         // Fast path: check cache
         {
             let cache = peer_cache.read().await;
-            if let Some(peer) = cache.get(&fid) {
-                return Ok(peer.clone());
+            if let Some(peer_ref) = cache.get(&fid) {
+                return Ok(*peer_ref);
             }
         }
 
         // Slow path: scan dialogs and populate cache
         log::debug!("Peer cache miss for folder_id={}, scanning dialogs...", fid);
-        let mut found: Option<Peer> = None;
+        let mut found: Option<PeerRef> = None;
         let mut dialogs = client.iter_dialogs();
         let mut discovered = HashMap::new();
         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
-            let peer_id = match &dialog.peer {
-                Peer::Channel(c) => Some(c.raw.id),
-                Peer::User(u) => Some(u.raw.id()),
-                _ => None,
+            let peer = &dialog.peer;
+            // Get the numeric ID for this peer
+            let peer_id = match peer {
+                grammers_client::peer::Peer::Channel(c) => Some(c.raw.id),
+                grammers_client::peer::Peer::User(u) => Some(u.raw.id()),
+                grammers_client::peer::Peer::Group(g) => {
+                    // Use the Group's id() method which returns PeerId
+                    g.id().bare_id()
+                },
+                grammers_client::peer::Peer::Community(comm) => {
+                    comm.id().bare_id()
+                },
             };
             if let Some(id) = peer_id {
-                discovered.insert(id, dialog.peer.clone());
-                if id == fid {
-                    found = Some(dialog.peer.clone());
-                    // Don't break — keep scanning to warm the cache
+                // Resolve the peer to a PeerRef
+                if let Ok(Some(peer_ref)) = peer.to_ref().await {
+                    discovered.insert(id, peer_ref);
+                    if id == fid {
+                        found = Some(peer_ref);
+                        // Don't break — keep scanning to warm the cache
+                    }
                 }
             }
         }
@@ -52,15 +69,34 @@ pub async fn resolve_peer(
 
         found.ok_or_else(|| format!("Folder/Chat {} not found", fid))
     } else {
+        // Fast path: check cache for key 0 (representing "me")
+        {
+            let cache = peer_cache.read().await;
+            if let Some(peer_ref) = cache.get(&0) {
+                return Ok(*peer_ref);
+            }
+        }
+
         match client.get_me().await {
-            Ok(me) => Ok(Peer::User(me)),
+            Ok(me) => {
+                let peer = grammers_client::peer::Peer::User(me);
+                match peer.to_ref().await {
+                    Ok(Some(peer_ref)) => {
+                        let mut cache = peer_cache.write().await;
+                        cache.insert(0, peer_ref);
+                        Ok(peer_ref)
+                    }
+                    Ok(None) => Err("Could not resolve self peer".to_string()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
             Err(e) => Err(e.to_string()),
         }
     }
 }
 
 /// Clear the peer cache (called on logout)
-pub async fn clear_peer_cache(peer_cache: &Arc<RwLock<HashMap<i64, Peer>>>) {
+pub async fn clear_peer_cache(peer_cache: &Arc<RwLock<HashMap<i64, PeerRef>>>) {
     peer_cache.write().await.clear();
 }
 

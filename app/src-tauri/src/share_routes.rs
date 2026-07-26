@@ -2,7 +2,7 @@ use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder, cookie::Co
 use crate::commands::TelegramState;
 use crate::commands::utils::resolve_peer;
 use crate::db::DbConnection;
-use grammers_client::types::Media;
+use grammers_client::media::Media;
 use sha2::{Sha256, Digest};
 use std::sync::Arc;
 use serde::Deserialize;
@@ -46,30 +46,33 @@ fn get_share_by_token(db: &DbConnection, token: &str) -> Result<Option<SharedLin
         )
         .map_err(|e| e.to_string())?;
     
-    stmt.bind((1, token)).map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(rusqlite::params![token], |row| {
+        let id: String = row.get(0)?;
+        let folder_id: Option<i64> = row.get(1)?;
+        let message_id: i64 = row.get(2)?;
+        let file_name: String = row.get(3)?;
+        let file_size: i64 = row.get(4)?;
+        let password_hash: Option<String> = row.get(5)?;
+        let _password_salt: Option<String> = row.get(6)?;
+        let expires_at: Option<i64> = row.get(7)?;
+        let revoked: i64 = row.get(8)?;
 
-    if let sqlite::State::Row = stmt.next().map_err(|e| e.to_string())? {
-        let id = stmt.read::<String, _>("id").map_err(|e| e.to_string())?;
-        let folder_id = stmt.read::<Option<i64>, _>("folder_id").ok().flatten();
-        let message_id = stmt.read::<i64, _>("message_id").map_err(|e| e.to_string())? as i32;
-        let file_name = stmt.read::<String, _>("file_name").map_err(|e| e.to_string())?;
-        let file_size = stmt.read::<i64, _>("file_size").map_err(|e| e.to_string())?;
-        let password_hash = stmt.read::<Option<String>, _>("password_hash").ok().flatten();
-        let _password_salt = stmt.read::<Option<String>, _>("password_salt").ok().flatten();
-        let expires_at = stmt.read::<Option<i64>, _>("expires_at").ok().flatten();
-        let revoked = stmt.read::<i64, _>("revoked").map_err(|e| e.to_string())? != 0;
-
-        Ok(Some(SharedLinkRow {
+        Ok(SharedLinkRow {
             _id: id,
             folder_id,
-            message_id,
+            message_id: message_id as i32,
             file_name,
             _file_size: file_size,
             password_hash,
             _password_salt,
             expires_at,
-            revoked,
-        }))
+            revoked: revoked != 0,
+        })
+    }).map_err(|e| e.to_string())?;
+
+    if let Some(r) = rows.next() {
+        let share = r.map_err(|e| e.to_string())?;
+        Ok(Some(share))
     } else {
         Ok(None)
     }

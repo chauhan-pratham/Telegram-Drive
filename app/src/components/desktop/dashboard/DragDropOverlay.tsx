@@ -18,9 +18,12 @@ export function DragDropOverlay() {
                 <div className="p-4 bg-telegram-primary/10 rounded-full">
                     <UploadCloud className="w-12 h-12 text-telegram-primary animate-bounce" />
                 </div>
-                <div className="text-center">
+                <div className="text-center flex flex-col items-center gap-1.5">
                     <h3 className="text-xl font-bold text-telegram-text">Drop files to upload</h3>
                     <p className="text-telegram-subtext text-sm mt-1">Files will be uploaded to the current folder</p>
+                    <div className="text-[10px] text-telegram-primary/80 leading-normal max-w-[280px] mt-2 bg-telegram-primary/5 border border-telegram-primary/10 p-2 rounded-lg text-center font-medium">
+                        💡 Tip: You can drag & drop pre-encrypted archives (.zip, .7z) for zero-knowledge privacy on Telegram.
+                    </div>
                 </div>
             </motion.div>
         </motion.div>

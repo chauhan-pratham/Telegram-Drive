@@ -1,5 +1,6 @@
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, Suspense, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { load } from "@tauri-apps/plugin-store";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AuthWizard } from "./components/shared/AuthWizard";
@@ -18,9 +19,9 @@ const MobileDashboard = React.lazy(() => import("./components/mobile/MobileDashb
 import { Toaster, toast } from "sonner";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
-import { SettingsProvider } from "./context/SettingsContext";
-import { useSettings } from "./context/SettingsContext";
+import { SettingsProvider, useSettings } from "./context/SettingsContext";
 import { useTranslation } from "react-i18next";
+import { DriveProvider } from "./context/DriveContext";
 
 const queryClient = new QueryClient();
 
@@ -34,12 +35,76 @@ function AppContent() {
   const { settings, updateSetting, isLoaded } = useSettings();
   const { i18n } = useTranslation();
 
+  const zoomRef = useRef<number>(1.0);
+
+  // Initialize zoom factor from persistent store on mount
+  useEffect(() => {
+    try {
+      const savedZoom = localStorage.getItem("app-zoom-factor");
+      if (savedZoom) {
+        const factor = parseFloat(savedZoom);
+        if (!isNaN(factor) && factor >= 0.5 && factor <= 2.0) {
+          zoomRef.current = factor;
+          getCurrentWebview().setZoom(factor).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.error("Failed to restore zoom factor:", e);
+    }
+  }, []);
+
+  const adjustZoom = useCallback((delta: number) => {
+    const nextZoom = Math.min(2.0, Math.max(0.5, parseFloat((zoomRef.current + delta).toFixed(1))));
+    if (nextZoom !== zoomRef.current) {
+      zoomRef.current = nextZoom;
+      try {
+        localStorage.setItem("app-zoom-factor", nextZoom.toString());
+      } catch {}
+      getCurrentWebview().setZoom(nextZoom).catch((e) => {
+        console.error("Failed to set zoom factor:", e);
+      });
+    }
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    if (zoomRef.current !== 1.0) {
+      zoomRef.current = 1.0;
+      try {
+        localStorage.setItem("app-zoom-factor", "1.0");
+      } catch {}
+      getCurrentWebview().setZoom(1.0).catch((e) => {
+        console.error("Failed to reset zoom factor:", e);
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMod = e.metaKey || e.ctrlKey;
+      if (isMod) {
+        if (e.code === "Equal" || e.code === "NumpadAdd" || e.key === "+") {
+          e.preventDefault();
+          adjustZoom(0.1);
+        } else if (e.code === "Minus" || e.code === "NumpadSubtract" || e.key === "-") {
+          e.preventDefault();
+          adjustZoom(-0.1);
+        } else if (e.key === "0") {
+          e.preventDefault();
+          resetZoom();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [adjustZoom, resetZoom]);
+
   // Handle active language and RTL direction changes
   useEffect(() => {
     if (!isLoaded) return;
     i18n.changeLanguage(settings.language);
     document.documentElement.lang = settings.language;
-    document.documentElement.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.dir = (settings.language as string) === 'ar' ? 'rtl' : 'ltr';
   }, [settings.language, isLoaded, i18n]);
 
   // Performance mode: auto-enable when user has prefers-reduced-motion
@@ -161,7 +226,7 @@ function AppContent() {
     return (
       <main className="h-screen w-screen flex items-center justify-center bg-telegram-bg">
         <div className="flex flex-col items-center gap-4">
-          <img src="/logo.svg" className="w-16 h-16 drop-shadow-lg animate-pulse" alt="Telegram Drive" />
+          <img src="/logo.svg?v=2" className="w-16 h-16 drop-shadow-lg animate-pulse" alt="Telegram Drive" />
           <p className="text-sm text-telegram-subtext tracking-wide">Restoring session...</p>
         </div>
       </main>
@@ -185,15 +250,17 @@ function AppContent() {
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-telegram-primary"></div>
           </div>
         }>
-          {isMobile ? (
-            <ErrorBoundary>
-              <MobileDashboard onLogout={() => setAuthStatus("unauthenticated")} />
-            </ErrorBoundary>
-          ) : (
-            <ErrorBoundary>
-              <DesktopDashboard onLogout={() => setAuthStatus("unauthenticated")} />
-            </ErrorBoundary>
-          )}
+          <DriveProvider>
+            {isMobile ? (
+              <ErrorBoundary>
+                <MobileDashboard onLogout={() => setAuthStatus("unauthenticated")} />
+              </ErrorBoundary>
+            ) : (
+              <ErrorBoundary>
+                <DesktopDashboard onLogout={() => setAuthStatus("unauthenticated")} />
+              </ErrorBoundary>
+            )}
+          </DriveProvider>
         </Suspense>
       )}
       {authStatus === "unauthenticated" && (
@@ -202,7 +269,6 @@ function AppContent() {
     </main>
   );
 }
-
 
 function App() {
   return (

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 
 interface ConfirmOptions {
     title: string;
@@ -27,22 +27,45 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         });
     };
 
-    const handleConfirm = () => {
+    const handleConfirm = useCallback(() => {
         setIsOpen(false);
         if (resolveRef) resolveRef(true);
-    };
+    }, [resolveRef]);
 
-    const handleCancel = () => {
+    const handleCancel = useCallback(() => {
         setIsOpen(false);
         if (resolveRef) resolveRef(false);
-    };
+    }, [resolveRef]);
+
+    // Handle Escape key cancellation
+    useEffect(() => {
+        if (!isOpen) return;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                handleCancel();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isOpen, handleCancel]);
 
     return (
         <ConfirmContext.Provider value={{ confirm }}>
             {children}
             {isOpen && (
-                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                    <div className="bg-[#1c1c1c] border border-white/10 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
+                <div 
+                    className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm cursor-pointer"
+                    onClick={handleCancel}
+                >
+                    <div 
+                        role="dialog"
+                        aria-modal="true"
+                        className="bg-[#1c1c1c] border border-white/10 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 cursor-default" 
+                        onClick={e => e.stopPropagation()}
+                    >
                         <h3 className="text-lg font-medium text-white mb-2">{options.title}</h3>
                         <p className="text-telegram-subtext text-sm mb-6 whitespace-pre-line">{options.message}</p>
                         <div className="flex justify-end gap-3">

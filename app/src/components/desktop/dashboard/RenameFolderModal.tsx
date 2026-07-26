@@ -52,7 +52,7 @@ export function RenameFolderModal({ folderId, currentName, onRename, onClose }: 
             onClick={onClose}
         >
             <div
-                className="bg-telegram-surface border border-telegram-border rounded-xl w-[360px] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                className="bg-telegram-surface border border-telegram-border rounded-xl w-full max-w-[360px] max-w-[90vw] shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
                 onClick={e => e.stopPropagation()}
             >
                 {/* Header */}

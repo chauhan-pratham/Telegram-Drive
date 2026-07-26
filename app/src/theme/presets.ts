@@ -114,6 +114,38 @@ export const BUILTIN_THEMES: CustomTheme[] = [
       hover: 'rgba(0, 0, 0, 0.04)',
     },
   },
+  {
+    id: 'google-light',
+    name: 'Google Drive Light',
+    isDark: false,
+    isBuiltin: true,
+    palette: {
+      bg: '#f4f6fa',
+      surface: '#ffffff',
+      primary: '#0b57d0',
+      secondary: '#c2e7ff',
+      text: '#1f1f1f',
+      subtext: '#5f6368',
+      border: '#e1e3e7',
+      hover: '#eef1f6',
+    },
+  },
+  {
+    id: 'google-dark',
+    name: 'Google Drive Dark',
+    isDark: true,
+    isBuiltin: true,
+    palette: {
+      bg: '#0f1013',
+      surface: '#1a1c22',
+      primary: '#a8c7fa',
+      secondary: '#004b87',
+      text: '#e3e3e3',
+      subtext: '#9aa0a6',
+      border: '#2a2e37',
+      hover: '#2f3442',
+    },
+  },
 ];
 
 /** Default palette values to seed a new custom theme. */

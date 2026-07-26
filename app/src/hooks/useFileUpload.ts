@@ -56,6 +56,7 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
                 i.id === event.payload.id ? {
                     ...i,
                     status: event.payload.phase,
+                    phase: event.payload.phase,
                     progress: event.payload.percent,
                     speedBytesPerSec: event.payload.speed,
                     uploadedBytes: event.payload.uploaded_bytes,
@@ -129,10 +130,11 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         const initialStatus = item.url ? 'downloading' : 'uploading';
         setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: initialStatus, progress: 0 } : i));
         try {
+            const actualFolderId = item.folderId === -999 ? null : item.folderId;
             if (item.url) {
-                await invoke('cmd_upload_from_url', { url: item.url, folderId: item.folderId, transferId: item.id });
+                await invoke('cmd_upload_from_url', { url: item.url, folderId: actualFolderId, transferId: item.id });
             } else {
-                await invoke('cmd_upload_file', { path: item.path, folderId: item.folderId, transferId: item.id });
+                await invoke('cmd_upload_file', { path: item.path, folderId: actualFolderId, transferId: item.id });
             }
             // Check if cancelled during upload
             if (cancelledRef.current.has(item.id)) {
@@ -140,6 +142,11 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
             } else {
                 setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'success', progress: 100 } : i));
                 queryClient.invalidateQueries({ queryKey: ['files', item.folderId] });
+                
+                // Auto-clear successful upload from queue after 3 seconds
+                setTimeout(() => {
+                    setUploadQueue(q => q.filter(i => i.id !== item.id));
+                }, 3000);
             }
             // Clean up temp zip on success
             await cleanupTempZip(item);
@@ -154,7 +161,7 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
                 } else {
                     const displayPath = item.url || item.path;
                     setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'error', error: errMsg } : i));
-                    toast.error(`Upload failed for ${displayPath.split('/').pop()}: ${e}`);
+                    toast.error(`Upload failed for ${displayPath.split(/[/\\]/).pop()}: ${e}`);
                 }
             } else {
                 cancelledRef.current.delete(item.id);

@@ -38,7 +38,7 @@ export function RemoteUploadModal({ isOpen, onClose, folders, onUpload }: Remote
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
             <form
                 onSubmit={handleSubmit}
-                className="bg-telegram-surface border border-telegram-border rounded-xl w-[420px] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
+                className="bg-telegram-surface border border-telegram-border rounded-xl w-full max-w-[420px] max-w-[90vw] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
                 onClick={e => e.stopPropagation()}
             >
                 <div className="p-4 border-b border-telegram-border flex items-center justify-between">

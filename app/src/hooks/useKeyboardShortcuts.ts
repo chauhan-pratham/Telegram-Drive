@@ -23,7 +23,6 @@ export function useKeyboardShortcuts({
     onRename,
     enabled = true
 }: UseKeyboardShortcutsProps) {
-
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
         if (!enabled) return;
 
@@ -41,14 +40,14 @@ export function useKeyboardShortcuts({
         const isMod = e.metaKey || e.ctrlKey;
 
         // Cmd/Ctrl + A - Select All
-        if (isMod && e.key === 'a') {
+        if (isMod && e.key.toLowerCase() === 'a') {
             e.preventDefault();
             onSelectAll();
             return;
         }
 
         // Cmd/Ctrl + F - Focus Search
-        if (isMod && e.key === 'f') {
+        if (isMod && e.key.toLowerCase() === 'f') {
             e.preventDefault();
             onSearch();
             return;

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Link, Copy, Check, Shield, Clock, AlertCircle, Share2 } from 'lucide-react';
 import { TelegramFile, ShareInfo } from '../../../types';
 import { invoke } from '@tauri-apps/api/core';
@@ -12,6 +13,7 @@ interface ShareDialogProps {
 }
 
 export function ShareDialog({ file, onClose }: ShareDialogProps) {
+    const queryClient = useQueryClient();
     const { t } = useTranslation();
     const [password, setPassword] = useState('');
     const [requirePassword, setRequirePassword] = useState(false);
@@ -43,7 +45,7 @@ export function ShareDialog({ file, onClose }: ShareDialogProps) {
             const pwdParam = requirePassword && password.trim() ? password : null;
 
             const res = await invoke<ShareInfo>('cmd_create_share', {
-                folderId: null, // Always file-level for now
+                folderId: file.folder_id ?? null,
                 messageId: file.id, // In Telegram Drive, file.id is the message id
                 fileName: file.name,
                 fileSize: file.size,
@@ -52,6 +54,7 @@ export function ShareDialog({ file, onClose }: ShareDialogProps) {
             });
 
             setShareInfo(res);
+            queryClient.invalidateQueries({ queryKey: ['active-shares'] });
         } catch (err: any) {
             setError(err.toString());
         } finally {
@@ -94,7 +97,7 @@ export function ShareDialog({ file, onClose }: ShareDialogProps) {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-telegram-surface border border-telegram-border rounded-xl w-[420px] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
+            <div className="bg-telegram-surface border border-telegram-border rounded-xl w-full max-w-[420px] max-w-[90vw] shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
                 <div className="p-4 border-b border-telegram-border flex justify-between items-center">
                     <h3 className="text-telegram-text font-medium flex items-center gap-2">
                         <Link className="w-5 h-5 text-telegram-primary" />

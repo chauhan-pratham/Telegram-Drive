@@ -21,9 +21,9 @@ pub struct FileMetadata {
     pub id: i64,
     pub folder_id: Option<i64>,
     pub name: String,
-    pub size: u64, // Updated to u64
+    pub size: u64, 
     pub mime_type: Option<String>,
-    pub file_ext: Option<String>, // Added field
+    pub file_ext: Option<String>, 
     pub created_at: String, 
     pub icon_type: String, 
 }
@@ -37,9 +37,12 @@ pub struct FolderMetadata {
     pub username: Option<String>,
     /// Whether the channel is public (has a username set).
     pub is_public: bool,
+    /// Whether this Telegram account created the channel.
+    pub is_owned: bool,
     // Local-first grouping & ordering metadata
     pub group_id: Option<i32>,
     pub display_order: i32,
+    pub participants_count: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -55,4 +58,32 @@ pub struct Drive {
     pub chat_id: i64,
     pub name: String,
     pub icon: Option<String>,
+}
+
+// --- NEW STRUCTS FOR METADATA MANIFEST SYNC ---
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FolderManifestEntry {
+    pub id: i64,
+    pub name: String,
+    pub username: Option<String>,
+    pub is_public: bool,
+    pub display_order: i32,
+    pub group_id: Option<i32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GroupManifestEntry {
+    pub id: i32,
+    pub name: String,
+    pub color_hex: String,
+    pub display_order: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GlobalDriveManifest {
+    pub version: u32,
+    pub updated_at: u64,
+    pub folders: Vec<FolderManifestEntry>,
+    pub groups: Vec<GroupManifestEntry>,
 }

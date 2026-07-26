@@ -1,8 +1,9 @@
 use tauri::State;
-use grammers_client::types::Media;
+use grammers_client::media::Media;
 use crate::TelegramState;
 use crate::commands::utils::resolve_peer;
 use crate::mp4_utils;
+use grammers_session::types::PeerRef;
 
 #[derive(serde::Serialize)]
 pub struct VideoMetadata {
@@ -71,7 +72,7 @@ pub async fn cmd_get_video_metadata_batch(
         if !req.file_name.to_lowercase().ends_with(".mp4") {
             continue;
         }
-        match download_and_process(&client, &peer, req).await {
+        match download_and_process(&client, peer, req).await {
             Ok(e) => results.push(e),
             Err(_) => results.push(BatchMetadataEntry {
                 message_id: req.message_id,
@@ -97,7 +98,7 @@ struct ParsedMetadata {
 /// Download the first 2 MB of a file and parse metadata + scan tkhd.
 async fn download_and_process(
     client: &grammers_client::Client,
-    peer: &grammers_client::types::Peer,
+    peer: PeerRef,
     req: &BatchMetadataRequest,
 ) -> Result<BatchMetadataEntry, String> {
     let messages = client
@@ -109,7 +110,7 @@ async fn download_and_process(
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
 
     let size = match &media {
-        Media::Document(d) => d.size() as u64,
+        Media::Document(d) => d.size().unwrap_or(0) as u64,
         _ => return Err("Not a document".to_string()),
     };
 
@@ -133,14 +134,14 @@ async fn download_moov_chunk(
 ) -> Result<Vec<u8>, String> {
     let peer = resolve_peer(client, folder_id, &state.peer_cache).await?;
     let messages = client
-        .get_messages_by_id(&peer, &[message_id])
+        .get_messages_by_id(peer, &[message_id])
         .await
         .map_err(|e| e.to_string())?;
     let msg = messages.into_iter().flatten().next()
         .ok_or_else(|| format!("Message {message_id} not found"))?;
     let media = msg.media().ok_or_else(|| "No media".to_string())?;
     let size = match &media {
-        Media::Document(d) => d.size() as u64,
+        Media::Document(d) => d.size().unwrap_or(0) as u64,
         _ => return Err("Not a document".to_string()),
     };
     download_bytes(client, &media, size).await
