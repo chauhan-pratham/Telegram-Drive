@@ -9,7 +9,7 @@ pub fn start_foreground_service() {
                 crate::jni_cache::get_upload_service_jclass(),
                 crate::jni_cache::get_start_service_method(),
             ) {
-                let method = unsafe { jni::objects::JMethodID::from_raw(method_id) };
+                let method = unsafe { jni::objects::JStaticMethodID::from_raw(method_id) };
                 let call_res = unsafe {
                     env.call_static_method_unchecked(
                         &j_class,
@@ -45,7 +45,7 @@ pub fn stop_foreground_service() {
                 crate::jni_cache::get_upload_service_jclass(),
                 crate::jni_cache::get_stop_service_method(),
             ) {
-                let method = unsafe { jni::objects::JMethodID::from_raw(method_id) };
+                let method = unsafe { jni::objects::JStaticMethodID::from_raw(method_id) };
                 let call_res = unsafe {
                     env.call_static_method_unchecked(
                         &j_class,

@@ -54,9 +54,6 @@ bcrypt = "0.16"
 constant_time_eq = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = "0.7"
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-unrar = "0.5"
 path-clean = "1"
 walkdir = "2"
 rusqlite = "0.32"
@@ -68,6 +65,9 @@ tempfile = "3"
 tokio-rustls = "0.26"
 rustls = "0.23"
 webpki-roots = "0.26"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+unrar = "0.5"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

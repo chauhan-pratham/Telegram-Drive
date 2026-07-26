@@ -1484,11 +1484,11 @@ pub async fn cmd_download_file(
                         if let Ok(j_cache_path) = env.new_string(&actual_save_path) {
                             if let Ok(j_file_name) = env.new_string(file_name) {
                                 if let Ok(j_mime_type) = env.new_string(mime_type) {
-                                                                  let call_res = if let (Some(method_id), Some(main_class)) = (
+                                    let call_res = if let (Some(method_id), Some(main_class)) = (
                                         crate::jni_cache::get_save_file_method(),
                                         crate::jni_cache::get_main_activity_jclass(),
                                     ) {
-                                        let method = unsafe { jni::objects::JMethodID::from_raw(method_id) };
+                                        let method = unsafe { jni::objects::JStaticMethodID::from_raw(method_id) };
                                         unsafe {
                                             env.call_static_method_unchecked(
                                                 &main_class,

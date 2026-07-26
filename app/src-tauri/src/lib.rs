@@ -619,7 +619,7 @@ pub fn run() {
                                                         log::info!("JNI: Successfully cached MainActivity class reference globally.");
 
                                                         // Eagerly cache MainActivity static method IDs
-                                                        let main_class_val: jni::objects::JClass = (&main_class_obj).into();
+                                                        let main_class_val = jni::objects::JClass::from(main_class_obj);
                                                         if let Ok(method_id) = env.get_static_method_id(
                                                             &main_class_val,
                                                             "saveFileToPublicDownloads",
@@ -661,7 +661,7 @@ pub fn run() {
                                                         log::info!("JNI: Successfully cached UploadForegroundService class reference globally.");
                                                         
                                                         // Eagerly cache Service static method IDs
-                                                        let svc_class_val: jni::objects::JClass = (&svc_class_obj).into();
+                                                        let svc_class_val = jni::objects::JClass::from(svc_class_obj);
                                                         if let Ok(method_id) = env.get_static_method_id(
                                                             &svc_class_val,
                                                             "startService",
