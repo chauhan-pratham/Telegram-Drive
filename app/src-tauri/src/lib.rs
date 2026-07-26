@@ -193,7 +193,7 @@ pub fn restart_api_server(_app: &tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn cmd_open_file_externally(path: String, _app_handle: tauri::AppHandle) -> Result<(), String> {
+fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         let ctx = ndk_context::android_context();
