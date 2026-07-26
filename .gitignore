@@ -38,7 +38,8 @@ Error.html
 
 # Android local builds
 /android/
-/app/src-tauri/gen/android/
+/app/src-tauri/gen/android/app/build/
+/app/src-tauri/gen/android/.gradle/
 *.apk
 *.aab
 .gradle/

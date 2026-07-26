@@ -388,7 +388,11 @@ jobs:
         working-directory: app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
-        run: npx tauri android build
+        run: |
+          if [ ! -d "src-tauri/gen/android" ]; then
+            npx tauri android init
+          fi
+          npx tauri android build
 
       - name: Upload Android APK to Release
         uses: softprops/action-gh-release@v2
