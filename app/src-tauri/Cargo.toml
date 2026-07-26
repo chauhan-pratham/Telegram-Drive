@@ -72,6 +72,7 @@ unrar = "0.5"
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1.1"
+openssl-sys = { version = "0.9", features = ["vendored"] }
 
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
