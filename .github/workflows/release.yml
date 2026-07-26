@@ -394,6 +394,7 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS: "-L ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/24"
           CC_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
           CXX_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
           AR_aarch64_linux_android: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
