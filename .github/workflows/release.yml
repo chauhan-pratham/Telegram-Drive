@@ -404,6 +404,7 @@ jobs:
           export CC_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++"
           export AR_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+          export RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
 
           if [ ! -d "src-tauri/gen/android" ]; then

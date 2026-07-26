@@ -56,7 +56,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 sevenz-rust2 = "0.7"
 path-clean = "1"
 walkdir = "2"
-rusqlite = { version = "0.32", features = ["bundled"] }
 mp4parse = "0.17"
 urlencoding = "2"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls", "socks"] }
@@ -69,10 +68,20 @@ webpki-roots = "0.26"
 [target.'cfg(not(target_os = "android"))'.dependencies]
 unrar = "0.5"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rusqlite = "0.32"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rusqlite = "0.32"
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1.1"
 openssl-sys = { version = "0.9", features = ["vendored"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
