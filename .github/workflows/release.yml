@@ -62,15 +62,15 @@ jobs:
 
           DOWNLOAD_TABLE="### 🚀 Direct Download Installers
 
-| Platform | Recommended Installer | Alternative |
-|:---|:---|:---|
-| 🪟 **Windows** | [📥 Download Setup (.exe)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64-setup.exe) | [.msi Installer](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64_en-US.msi) |
-| 🍏 **macOS (Intel)** | [📥 Download Mac Intel (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64.dmg) | - |
-| 🍏 **macOS (Apple Silicon)** | [📥 Download Mac M1/M2/M3 (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_aarch64.dmg) | - |
-| 🐧 **Linux** | [📥 Download AppImage](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.AppImage) | [.deb Package](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.deb) |
+          | Platform | Recommended Installer | Alternative |
+          |:---|:---|:---|
+          | 🪟 **Windows** | [📥 Download Setup (.exe)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64-setup.exe) | [.msi Installer](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64_en-US.msi) |
+          | 🍏 **macOS (Intel)** | [📥 Download Mac Intel (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64.dmg) | - |
+          | 🍏 **macOS (Apple Silicon)** | [📥 Download Mac M1/M2/M3 (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_aarch64.dmg) | - |
+          | 🐧 **Linux** | [📥 Download AppImage](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.AppImage) | [.deb Package](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.deb) |
 
----
-"
+          ---
+          "
 
           if [ -f CHANGELOG.md ]; then
             CHANGELOG_BODY=$(awk -v version="$VERSION" '
@@ -345,8 +345,21 @@ ${CHANGELOG_BODY}"
 
           echo "::notice::AppImage patched successfully for cross-distro EGL compatibility"
 
+  publish-release:
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: process.env.release_id,
+              release_id: process.env.RELEASE_ID,
               draft: false,
               prerelease: false
-            })
+            });
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}

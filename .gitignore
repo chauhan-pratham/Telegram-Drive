@@ -3,20 +3,36 @@ node_modules/
 dist/
 .DS_Store
 .env
+.env*.local
 
-# Rust
+# Rust & Tauri
 /app/src-tauri/target/
 /app/src-tauri/gen/
 **/*.rs.bk
+
+# Local Storage & Database (testing caches)
+*.db
+*.sqlite
+bandwidth.json
+offline_storage/
+previews/
+thumbnails/
+streaming/
 
 # Editors
 .vscode/
 .idea/
 
+# Secrets & Keys
+*.key
+*.pem
+*.keystore
+*.jks
+local.properties
+
 # Misc
 CompiledApps/
 *.log
-*.key
 Error.html
 **/LatestError.html
 
@@ -26,8 +42,6 @@ Error.html
 *.apk
 *.aab
 .gradle/
-local.properties
-*.keystore
 *.idsig
 *.DMP
 
