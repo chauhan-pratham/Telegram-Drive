@@ -412,7 +412,9 @@ jobs:
           export AR_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
           
           if [ -n "$SYSROOT_LIB" ]; then
-            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $SYSROOT_LIB"
+            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $SYSROOT_LIB -C link-arg=-Wl,--allow-multiple-definition"
+          else
+            export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
           fi
 
           if [ ! -d "src-tauri/gen/android" ]; then
