@@ -413,9 +413,24 @@ jobs:
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init
           fi
-          # Ensure Gradle uses debug signing config and includes -Wl,-z,muldefs in rustFlags
+          # Ensure Gradle uses debug signing config for release builds when no key is specified
           find src-tauri/gen/android/app -name "build.gradle.kts" -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} + 2>/dev/null || true
-          find src-tauri/gen/android/app -name "build.gradle.kts" -exec sed -i 's/rustFlags = listOf(/rustFlags = listOf("-C", "link-arg=-Wl,-z,muldefs", /g' {} + 2>/dev/null || true
+
+          # Patch Gradle build script to force -Wl,-z,muldefs into Gradle's cargo environment
+          find src-tauri/gen/android/app -name "build.gradle.kts" | while read -r GRADLE_FILE; do
+            cat << 'GRADLE_PATCH' >> "$GRADLE_FILE"
+
+tasks.withType<Exec>().configureEach {
+    if (name.startsWith("rustBuild")) {
+        environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS", "-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES -Clink-arg=-Wl,-z,muldefs")
+        environment("CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS", "-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES -Clink-arg=-Wl,-z,muldefs")
+        environment("CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS", "-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES -Clink-arg=-Wl,-z,muldefs")
+        environment("CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS", "-Clink-arg=-landroid -Clink-arg=-llog -Clink-arg=-lOpenSLES -Clink-arg=-Wl,-z,muldefs")
+        environment("RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
+    }
+}
+GRADLE_PATCH
+          done
 
           npx tauri android build
 
