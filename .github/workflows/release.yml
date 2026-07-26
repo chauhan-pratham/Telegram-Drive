@@ -404,8 +404,22 @@ jobs:
           export CC_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++"
           export AR_aarch64_linux_android="$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
-          export RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
+
+          # Find exact NDK libsqlite3.so sysroot paths for all 4 Android architectures
+          AARCH64_LIB=$(find "$ANDROID_HOME" -name "libsqlite3.so" 2>/dev/null | grep "aarch64" | head -n 1 | xargs -r dirname)
+          ARMV7_LIB=$(find "$ANDROID_HOME" -name "libsqlite3.so" 2>/dev/null | grep "arm" | grep -v "aarch64" | head -n 1 | xargs -r dirname)
+          I686_LIB=$(find "$ANDROID_HOME" -name "libsqlite3.so" 2>/dev/null | grep "i686" | head -n 1 | xargs -r dirname)
+          X86_64_LIB=$(find "$ANDROID_HOME" -name "libsqlite3.so" 2>/dev/null | grep "x86_64" | head -n 1 | xargs -r dirname)
+
+          echo "AArch64 SQLite Lib: $AARCH64_LIB"
+          echo "ARMv7 SQLite Lib: $ARMV7_LIB"
+          echo "i686 SQLite Lib: $I686_LIB"
+          echo "x86_64 SQLite Lib: $X86_64_LIB"
+
+          [ -n "$AARCH64_LIB" ] && export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-L $AARCH64_LIB"
+          [ -n "$ARMV7_LIB" ] && export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS="-L $ARMV7_LIB"
+          [ -n "$I686_LIB" ] && export CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS="-L $I686_LIB"
+          [ -n "$X86_64_LIB" ] && export CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-L $X86_64_LIB"
 
           APKSIGNER_CMD=$(find "$ANDROID_HOME/build-tools" -name "apksigner" 2>/dev/null | sort -V | tail -n 1)
           if [ -z "$APKSIGNER_CMD" ]; then
