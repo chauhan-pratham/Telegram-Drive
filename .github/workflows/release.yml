@@ -420,6 +420,10 @@ jobs:
 
 tasks.withType(Exec::class.java).configureEach {
     environment("RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
+    environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
+    environment("CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
+    environment("CARGO_TARGET_I686_LINUX_ANDROID_RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
+    environment("CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
 }
 GRADLE_EOF
           done
