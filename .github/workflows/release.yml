@@ -420,7 +420,6 @@ jobs:
 
 tasks.withType(Exec::class.java).configureEach {
     environment("RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs")
-    environment("CARGO_ENCODED_RUSTFLAGS", "-C\x1flink-arg=-Wl,-z,muldefs")
 }
 GRADLE_EOF
           done
