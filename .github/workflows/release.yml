@@ -416,7 +416,7 @@ jobs:
           # Ensure Gradle uses debug signing config and forces -Wl,-z,muldefs in task environment
           find src-tauri/gen/android/app -name "build.gradle.kts" | while read -r GRADLE_FILE; do
             sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' "$GRADLE_FILE" || true
-            echo 'tasks.withType(Exec::class.java).configureEach { environment("RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs") }' >> "$GRADLE_FILE"
+            printf '\n\ntasks.withType<Exec> { environment("RUSTFLAGS", "-C link-arg=-Wl,-z,muldefs") }\n' >> "$GRADLE_FILE"
           done
 
           npx tauri android build
