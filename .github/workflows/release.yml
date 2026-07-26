@@ -407,22 +407,25 @@ jobs:
           export RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-Wl,-z,muldefs"
 
+          APKSIGNER_CMD=$(find "$ANDROID_HOME/build-tools" -name "apksigner" 2>/dev/null | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER_CMD" ]; then
+            APKSIGNER_CMD="apksigner"
+          fi
+
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init
           fi
           # Ensure Gradle uses debug signing config for release builds when no key is specified
-          if [ -f "src-tauri/gen/android/app/build.gradle.kts" ]; then
-            sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' src-tauri/gen/android/app/build.gradle.kts || true
-          fi
+          find src-tauri/gen/android/app -name "build.gradle.kts" -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} + 2>/dev/null || true
 
           npx tauri android build
 
           # Auto-sign any unsigned APKs using Android SDK's apksigner
-          find src-tauri/gen/android/app/build/outputs/apk -name "*-unsigned.apk" | while read -r UNSIGNED_APK; do
-            SIGNED_APK="${UNSIGNED_APK%-unsigned.apk}-signed.apk"
+          find src-tauri/gen/android/app/build/outputs/apk -name "*-unsigned.apk" 2>/dev/null | while read -r UNSIGNED_APK; do
+            SIGNED_APK="${UNSIGNED_APK%-unsigned.apk}.apk"
             echo "Signing $UNSIGNED_APK -> $SIGNED_APK"
             keytool -genkey -v -keystore release.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android,OU=Android,O=Android,L=Android,ST=Android,C=US" 2>/dev/null || true
-            apksigner sign --ks release.keystore --ks-pass pass:android --key-pass pass:android --out "$SIGNED_APK" "$UNSIGNED_APK"
+            "$APKSIGNER_CMD" sign --ks release.keystore --ks-pass pass:android --key-pass pass:android --out "$SIGNED_APK" "$UNSIGNED_APK"
             rm -f "$UNSIGNED_APK"
           done
 
