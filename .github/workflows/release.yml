@@ -90,7 +90,7 @@ jobs:
           fi
 
           FULL_BODY="${DOWNLOAD_TABLE}
-${CHANGELOG_BODY}"
+          ${CHANGELOG_BODY}"
 
           # Escape for GitHub Actions output
           echo "BODY<<EOF" >> $GITHUB_OUTPUT
