@@ -14,7 +14,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v4
       
       - name: Get version
         id: get_version
@@ -65,6 +65,7 @@ jobs:
           | Platform | Recommended Installer | Alternative |
           |:---|:---|:---|
           | 🪟 **Windows** | [📥 Download Setup (.exe)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64-setup.exe) | [.msi Installer](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64_en-US.msi) |
+          | 📱 **Android** | [📥 Download APK (.apk)](https://github.com/${REPO}/releases/download/v${VERSION}/app-universal-release.apk) | - |
           | 🍏 **macOS (Intel)** | [📥 Download Mac Intel (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_x64.dmg) | - |
           | 🍏 **macOS (Apple Silicon)** | [📥 Download Mac M1/M2/M3 (.dmg)](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_aarch64.dmg) | - |
           | 🐧 **Linux** | [📥 Download AppImage](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.AppImage) | [.deb Package](https://github.com/${REPO}/releases/download/v${VERSION}/Telegram.Drive_${VERSION}_amd64.deb) |
@@ -144,7 +145,7 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v4
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -346,8 +347,59 @@ jobs:
 
           echo "::notice::AppImage patched successfully for cross-distro EGL compatibility"
 
+  build-android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust stable & Android targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install NDK & Build Tools
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.2.9519653" "build-tools;34.0.0"
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build Android APK
+        working-directory: app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/25.2.9519653
+        run: npx tauri android build --apk
+
+      - name: Upload Android APK to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.create-release.outputs.release_id }}
+          files: app/src-tauri/gen/android/app/build/outputs/apk/universal/release/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   publish-release:
-    needs: [create-release, build-tauri]
+    needs: [create-release, build-tauri, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
