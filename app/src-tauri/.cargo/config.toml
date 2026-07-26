@@ -4,14 +4,5 @@ rustflags = ["-C", "link-arg=/FORCE:MULTIPLE"]
 [target.i686-pc-windows-msvc]
 rustflags = ["-C", "link-arg=/FORCE:MULTIPLE"]
 
-[target.aarch64-linux-android]
-rustflags = ["-C", "link-arg=-Wl,-z,muldefs", "-C", "link-arg=-Wl,--allow-multiple-definition"]
-
-[target.armv7-linux-androideabi]
-rustflags = ["-C", "link-arg=-Wl,-z,muldefs", "-C", "link-arg=-Wl,--allow-multiple-definition"]
-
-[target.i686-linux-android]
-rustflags = ["-C", "link-arg=-Wl,-z,muldefs", "-C", "link-arg=-Wl,--allow-multiple-definition"]
-
-[target.x86_64-linux-android]
-rustflags = ["-C", "link-arg=-Wl,-z,muldefs", "-C", "link-arg=-Wl,--allow-multiple-definition"]
+[target.'cfg(target_os = "android")']
+rustflags = ["-C", "link-arg=-Wl,-z,muldefs"]

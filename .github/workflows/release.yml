@@ -413,8 +413,9 @@ jobs:
           if [ ! -d "src-tauri/gen/android" ]; then
             npx tauri android init
           fi
-          # Ensure Gradle uses debug signing config for release builds when no key is specified
+          # Ensure Gradle uses debug signing config and includes -Wl,-z,muldefs in rustFlags
           find src-tauri/gen/android/app -name "build.gradle.kts" -exec sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/g' {} + 2>/dev/null || true
+          find src-tauri/gen/android/app -name "build.gradle.kts" -exec sed -i 's/rustFlags = listOf(/rustFlags = listOf("-C", "link-arg=-Wl,-z,muldefs", /g' {} + 2>/dev/null || true
 
           npx tauri android build
 
