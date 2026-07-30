@@ -106,6 +106,11 @@ pub fn cmd_log(message: String) {
 }
 
 #[tauri::command]
+pub fn cmd_log_error(message: String) {
+    log::error!("[FRONTEND] {}", message);
+}
+
+#[tauri::command]
 pub fn cmd_get_bandwidth(bw_state: State<'_, Arc<BandwidthManager>>) -> crate::bandwidth::BandwidthStats {
     bw_state.get_stats()
 }

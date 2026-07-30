@@ -1,9 +1,11 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, Maximize2, Minimize2, ExternalLink, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, CheckCircle2, Download, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { TelegramFile } from '../../../types';
 import { isVideoFile, isAudioFile } from '../../../utils';
+
 
 interface StreamInfo {
     token: string;
@@ -18,9 +20,13 @@ interface MediaPlayerProps {
     currentIndex?: number;
     totalItems?: number;
     activeFolderId: number | null;
+    onDownload?: (file: TelegramFile) => void;
+    onShare?: (file: TelegramFile) => void;
+    onDelete?: (file: TelegramFile) => void;
 }
 
-export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: MediaPlayerProps) {
+export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, onDownload, onShare: _onShare, onDelete }: MediaPlayerProps) {
+
     const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
     const [isOfflineFile, setIsOfflineFile] = useState<boolean>(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -108,13 +114,13 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
         let unlisten: (() => void) | null = null;
 
         try {
-            const { listen } = await import('@tauri-apps/api/event');
             const fn = await listen<any>('download-progress', (event) => {
                 if (event.payload.id === transferId) {
                     setDownloadProgress(event.payload.percent);
                 }
             });
             unlisten = fn;
+
 
             const filePath = await invoke<string>('cmd_get_local_cache_path', {
                 messageId: file.id,
@@ -217,141 +223,162 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
     }, [onClose, onNext, onPrev, toggleFullscreen]);
 
     return (
-        <div className={`fixed inset-0 z-[200] bg-black/95 animate-in fade-in duration-200 ${isFullscreen ? 'p-0' : 'flex flex-col items-center justify-between p-2 sm:p-4 backdrop-blur-md'}`} onClick={onClose}>
-            <div ref={containerRef} className={`relative w-full h-full flex flex-col justify-between ${isFullscreen ? 'w-full h-full' : 'max-w-6xl max-h-full'}`} onClick={e => e.stopPropagation()}>
-                
-                {/* Top Header Bar with File Title & Controls */}
-                <div className={`w-full flex items-center justify-between p-3 bg-gradient-to-b from-black/90 via-black/60 to-transparent z-30 shrink-0 ${isFullscreen ? 'absolute top-0 left-0 right-0 p-4 transition-opacity duration-300' : ''}`}>
-                    <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                        <button
-                            onClick={onClose}
-                            className="p-2 text-white/80 hover:text-white bg-black/40 hover:bg-white/20 border border-white/10 rounded-full transition-all shrink-0 cursor-pointer shadow-md"
-                            title="Back (Esc)"
-                        >
-                            <ArrowLeft className="w-5 h-5" />
-                        </button>
-                        <div className="min-w-0 flex-1">
-                            <h3 className="text-sm font-semibold text-white truncate drop-shadow">{file.name}</h3>
-                            <p className="text-[11px] text-white/60 truncate drop-shadow-sm flex items-center gap-1.5">
-                                {isOfflineFile ? (
-                                    <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-3 h-3" /> Playing from Offline Storage (0% Internet)
-                                    </span>
-                                ) : (
-                                    <span>Streaming from Telegram Drive</span>
-                                )}
-                                {typeof currentIndex === 'number' && typeof totalItems === 'number' && totalItems > 0 && (
-                                    <span className="ml-1">• {currentIndex + 1}/{totalItems}</span>
-                                )}
-                            </p>
-                        </div>
-                    </div>
+        <div className={`fixed inset-0 z-[200] bg-black/95 animate-in fade-in duration-200 flex flex-col backdrop-blur-md`} onClick={onClose}>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                        {isVideo && (
+            {/* Full-width Top Header Bar — matches PreviewModal & PdfViewer */}
+            <div
+                className={`w-full flex items-center justify-between px-4 py-3 bg-black/90 text-white z-50 border-b border-white/10 shrink-0 ${isFullscreen ? 'absolute top-0 left-0 right-0 transition-opacity duration-300' : ''}`}
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Left: Back button + Filename + subtitle */}
+                <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+                    <button
+                        onClick={onClose}
+                        className="p-1.5 rounded-full hover:bg-white/10 text-white cursor-pointer transition active:scale-95 shrink-0"
+                        title="Back (Esc)"
+                    >
+                        <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </button>
+                    <div className="min-w-0 flex-1">
+                        <h2 className="text-sm sm:text-base font-semibold text-white truncate tracking-tight">{file.name}</h2>
+                        <p className="text-[11px] text-white/60 truncate flex items-center gap-1.5">
+                            {isOfflineFile ? (
+                                <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
+                                    <CheckCircle2 className="w-3 h-3" /> Playing from Offline Storage (0% Internet)
+                                </span>
+                            ) : (
+                                <span>Streaming from Telegram Drive</span>
+                            )}
+                            {typeof currentIndex === 'number' && typeof totalItems === 'number' && totalItems > 0 && (
+                                <span className="ml-1">• {currentIndex + 1}/{totalItems}</span>
+                            )}
+                        </p>
+                    </div>
+                </div>
+
+                {/* Right: Action buttons */}
+                <div className="flex items-center gap-2 shrink-0">
+                    {onDownload && (
+                        <button
+                            onClick={() => onDownload(file)}
+                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all cursor-pointer"
+                            title="Download"
+                        >
+                            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
+                    {isVideo && (
+                        <button
+                            onClick={handleOpenNative}
+                            disabled={downloadingNative}
+                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 cursor-pointer"
+                            title="Open in System Player"
+                        >
+                            <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
+                    {onDelete && (
+                        <button
+                            onClick={() => { onDelete(file); onClose(); }}
+                            className="p-2 text-red-400 hover:text-red-300 bg-white/10 hover:bg-red-500/20 rounded-full transition-all cursor-pointer"
+                            title="Delete File"
+                        >
+                            <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
+
+                </div>
+            </div>
+
+            {/* Media content area — centered, takes remaining space */}
+            <div className="flex-1 flex flex-col items-center justify-between p-2 sm:p-4 min-h-0" onClick={onClose}>
+                <div ref={containerRef} className="relative w-full flex-1 flex flex-col justify-between max-w-6xl max-h-full min-h-0" onClick={e => e.stopPropagation()}>
+
+                    {/* Main Media Display Box */}
+                    <div className={`flex-1 w-full flex items-center justify-center relative bg-black overflow-hidden min-h-0 ${isFullscreen ? 'rounded-none border-none my-0' : 'rounded-2xl border border-white/10 my-1'}`}>
+                        {onPrev && (
                             <button
-                                onClick={handleOpenNative}
-                                disabled={downloadingNative}
-                                className="p-2 text-white/80 hover:text-white bg-black/40 hover:bg-white/20 border border-white/10 rounded-full transition-all disabled:opacity-50 cursor-pointer shadow-md"
-                                title="Open in System Player"
+                                onClick={onPrev}
+                                className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 p-2.5 text-white/80 hover:text-white bg-black/60 hover:bg-black/80 border border-white/20 rounded-full transition-all z-20 shadow-lg cursor-pointer"
+                                title="Previous (ArrowLeft / J)"
                             >
-                                <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
+                                <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
                             </button>
                         )}
-                        <button
-                            onClick={toggleFullscreen}
-                            className="p-2 text-white/80 hover:text-white bg-black/40 hover:bg-white/20 border border-white/10 rounded-full transition-all cursor-pointer shadow-md"
-                            title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
-                        >
-                            {isFullscreen ? <Minimize2 className="w-4 h-4 sm:w-5 sm:h-5" /> : <Maximize2 className="w-4 h-4 sm:w-5 sm:h-5" />}
-                        </button>
-                    </div>
-                </div>
 
-                {/* Main Media Display Box (Auto-fits vertical & horizontal aspect ratios) */}
-                <div className={`flex-1 w-full flex items-center justify-center relative bg-black overflow-hidden min-h-0 ${isFullscreen ? 'rounded-none border-none my-0' : 'rounded-2xl border border-white/10 my-1'}`}>
-                    {onPrev && (
-                        <button
-                            onClick={onPrev}
-                            className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 p-2.5 text-white/80 hover:text-white bg-black/60 hover:bg-black/80 border border-white/20 rounded-full transition-all z-20 shadow-lg cursor-pointer"
-                            title="Previous (ArrowLeft / J)"
-                        >
-                            <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
-                        </button>
-                    )}
-
-                    {onNext && (
-                        <button
-                            onClick={onNext}
-                            className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 p-2.5 text-white/80 hover:text-white bg-black/60 hover:bg-black/80 border border-white/20 rounded-full transition-all z-20 shadow-lg cursor-pointer"
-                            title="Next (ArrowRight / L)"
-                        >
-                            <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
-                        </button>
-                    )}
-
-                    {downloadingNative ? (
-                        <div className="flex flex-col items-center gap-4 text-white w-full max-w-md px-6">
-                            <Loader2 className="w-8 h-8 text-telegram-primary animate-spin" />
-                            <p className="text-sm font-medium">Preparing file for external player...</p>
-                            <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden mt-2">
-                                <div 
-                                    className="bg-telegram-primary h-full transition-all duration-300 rounded-full"
-                                    style={{ width: `${downloadProgress}%` }}
-                                />
-                            </div>
-                            <span className="text-xs text-white/40">{downloadProgress}% downloaded</span>
-                        </div>
-                    ) : nativePlayError ? (
-                        <div className="flex flex-col items-center gap-3 text-white px-8">
-                            <AlertTriangle className="w-10 h-10 text-red-400" />
-                            <p className="text-sm text-red-400 font-medium">Playback Error</p>
-                            <p className="text-xs text-white/40 text-center max-w-md">{nativePlayError}</p>
+                        {onNext && (
                             <button
-                                onClick={handleOpenNative}
-                                className="mt-4 flex items-center gap-2 px-3.5 py-2 bg-telegram-primary hover:bg-telegram-primary/80 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                                onClick={onNext}
+                                className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 p-2.5 text-white/80 hover:text-white bg-black/60 hover:bg-black/80 border border-white/20 rounded-full transition-all z-20 shadow-lg cursor-pointer"
+                                title="Next (ArrowRight / L)"
                             >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                Open in Native System Player
+                                <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
                             </button>
-                        </div>
-                    ) : !streamUrl ? (
-                        <div className="flex flex-col items-center gap-4 text-white">
-                            <div className="w-10 h-10 border-4 border-telegram-primary border-t-transparent rounded-full animate-spin"></div>
-                            <p className="text-xs text-white/60">Preparing media...</p>
-                        </div>
-                    ) : isVideo ? (
-                        <video
-                            ref={mediaElementRef}
-                            src={streamUrl}
-                            controls
-                            controlsList="nodownload noremoteplayback"
-                            autoPlay
-                            className="w-full h-full max-h-[85vh] object-contain"
-                            onError={(e) => {
-                                console.error("Playback error on video element:", e);
-                                setNativePlayError("Failed to play video in browser (codec unsupported)");
-                            }}
-                        />
-                    ) : isAudio ? (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-telegram-primary/20 to-black p-6">
-                            <div className="w-32 h-32 rounded-full bg-telegram-surface flex items-center justify-center mb-8 shadow-xl animate-pulse-slow">
-                                <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-telegram-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
-                            </div>
-                            <audio ref={mediaElementRef as any} src={streamUrl} controls autoPlay className="w-full max-w-md" />
-                        </div>
-                    ) : (
-                        <div className="text-white text-sm">Unsupported media type</div>
-                    )}
-                </div>
+                        )}
 
-                {/* Keyboard shortcut hints footer */}
-                <div className="w-full py-1 text-center shrink-0">
-                    <div className="hidden sm:flex items-center justify-center gap-4 text-[10px] text-white/30 select-none">
-                        <span>Space: Play/Pause</span>
-                        <span>F: Fullscreen</span>
-                        <span>M: Mute</span>
-                        <span>Esc: Close</span>
+                        {downloadingNative ? (
+                            <div className="flex flex-col items-center gap-4 text-white w-full max-w-md px-6">
+                                <Loader2 className="w-8 h-8 text-telegram-primary animate-spin" />
+                                <p className="text-sm font-medium">Preparing file for external player...</p>
+                                <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden mt-2">
+                                    <div 
+                                        className="bg-telegram-primary h-full transition-all duration-300 rounded-full"
+                                        style={{ width: `${downloadProgress}%` }}
+                                    />
+                                </div>
+                                <span className="text-xs text-white/40">{downloadProgress}% downloaded</span>
+                            </div>
+                        ) : nativePlayError ? (
+                            <div className="flex flex-col items-center gap-3 text-white px-8">
+                                <AlertTriangle className="w-10 h-10 text-red-400" />
+                                <p className="text-sm text-red-400 font-medium">Playback Error</p>
+                                <p className="text-xs text-white/40 text-center max-w-md">{nativePlayError}</p>
+                                <button
+                                    onClick={handleOpenNative}
+                                    className="mt-4 flex items-center gap-2 px-3.5 py-2 bg-telegram-primary hover:bg-telegram-primary/80 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                                >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    Open in Native System Player
+                                </button>
+                            </div>
+                        ) : !streamUrl ? (
+                            <div className="flex flex-col items-center gap-4 text-white">
+                                <div className="w-10 h-10 border-4 border-telegram-primary border-t-transparent rounded-full animate-spin"></div>
+                                <p className="text-xs text-white/60">Preparing media...</p>
+                            </div>
+                        ) : isVideo ? (
+                            <video
+                                ref={mediaElementRef}
+                                src={streamUrl}
+                                controls
+                                controlsList="nodownload noremoteplayback"
+                                autoPlay
+                                className="w-full h-full max-h-[85vh] object-contain"
+                                onError={(e) => {
+                                    console.error("Playback error on video element:", e);
+                                    setNativePlayError("Failed to play video in browser (codec unsupported)");
+                                }}
+                            />
+                        ) : isAudio ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-telegram-primary/20 to-black p-6">
+                                <div className="w-32 h-32 rounded-full bg-telegram-surface flex items-center justify-center mb-8 shadow-xl animate-pulse-slow">
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12 text-telegram-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" /></svg>
+                                </div>
+                                <audio ref={mediaElementRef as any} src={streamUrl} controls autoPlay className="w-full max-w-md" />
+                            </div>
+                        ) : (
+                            <div className="text-white text-sm">Unsupported media type</div>
+                        )}
+                    </div>
+
+                    {/* Keyboard shortcut hints footer */}
+                    <div className="w-full py-1 text-center shrink-0">
+                        <div className="hidden sm:flex items-center justify-center gap-4 text-[10px] text-white/30 select-none">
+                            <span>Space: Play/Pause</span>
+                            <span>F: Fullscreen</span>
+                            <span>M: Mute</span>
+                            <span>Esc: Close</span>
+                        </div>
                     </div>
                 </div>
             </div>

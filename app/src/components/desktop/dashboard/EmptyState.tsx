@@ -1,5 +1,4 @@
 import { Upload } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 interface EmptyStateProps {
     onUpload?: () => void;
@@ -7,24 +6,22 @@ interface EmptyStateProps {
 }
 
 export function EmptyState({ onUpload, tab = 'my-drive' }: EmptyStateProps) {
-    const { t } = useTranslation();
 
-    // Map tab keys to translation keys
-    let titleKey = 'common.empty_my_drive_title';
-    let descKey = 'common.empty_my_drive_desc';
+    let title = 'My Drive is empty';
+    let desc = 'Upload files or create folders to get started.';
 
     if (tab === 'starred') {
-        titleKey = 'common.empty_starred_title';
-        descKey = 'common.empty_starred_desc';
+        title = 'No starred files';
+        desc = 'Star files or folders to find them quickly later.';
     } else if (tab === 'recent') {
-        titleKey = 'common.empty_recent_title';
-        descKey = 'common.empty_recent_desc';
+        title = 'No recent files';
+        desc = 'Files you open will appear here.';
     } else if (tab === 'shared') {
-        titleKey = 'common.empty_shared_title';
-        descKey = 'common.empty_shared_desc';
+        title = 'Nothing shared with you';
+        desc = 'Files shared with you will appear here.';
     } else if (tab === 'trash') {
-        titleKey = 'common.empty_trash_title';
-        descKey = 'common.empty_trash_desc';
+        title = 'Trash is empty';
+        desc = 'Items you delete will appear here.';
     }
 
     const showUploadButton = tab === 'my-drive';
@@ -152,10 +149,10 @@ export function EmptyState({ onUpload, tab = 'my-drive' }: EmptyStateProps) {
             </svg>
 
             <h3 className="text-xl font-semibold text-telegram-text mb-2">
-                {t(titleKey)}
+                {title}
             </h3>
             <p className="text-telegram-subtext text-sm mb-6 max-w-xs leading-relaxed">
-                {t(descKey)}
+                {desc}
             </p>
 
             {showUploadButton && onUpload && (

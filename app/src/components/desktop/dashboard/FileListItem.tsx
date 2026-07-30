@@ -52,18 +52,28 @@ export function FileListItem({
         <div
             onClick={(e) => onFileClick(e, file.id)}
             onContextMenu={(e) => handleContextMenu(e, file)}
-            draggable={!isFolder}
+            draggable={file.id !== -999}
             onDragStart={(e) => {
-                const idsToDrag = selectedIds.includes(file.id) ? selectedIds : [file.id];
-                if (onDragStart) onDragStart(idsToDrag);
-                e.dataTransfer.setData("application/x-telegram-file-ids", JSON.stringify(idsToDrag));
-                e.dataTransfer.effectAllowed = 'move';
-                const dragCount = idsToDrag.length;
-                const ghost = createDragGhost(displayName, isFolder, dragCount);
-                e.dataTransfer.setDragImage(ghost, 0, 0);
-                requestAnimationFrame(() => ghost.remove());
+                if (isFolder) {
+                    e.dataTransfer.setData("application/x-telegram-folder-id", file.id.toString());
+                    e.dataTransfer.effectAllowed = 'move';
+                    const ghost = createDragGhost(displayName, true, 1);
+                    e.dataTransfer.setDragImage(ghost, 0, 0);
+                    requestAnimationFrame(() => ghost.remove());
+                } else {
+                    const idsToDrag = selectedIds.includes(file.id) ? selectedIds : [file.id];
+                    if (onDragStart) onDragStart(idsToDrag);
+                    e.dataTransfer.setData("application/x-telegram-file-ids", JSON.stringify(idsToDrag));
+                    e.dataTransfer.effectAllowed = 'move';
+                    const dragCount = idsToDrag.length;
+                    const ghost = createDragGhost(displayName, false, dragCount);
+                    e.dataTransfer.setDragImage(ghost, 0, 0);
+                    requestAnimationFrame(() => ghost.remove());
+                }
             }}
-            onDragEnd={onDragEnd}
+            onDragEnd={() => {
+                if (!isFolder && onDragEnd) onDragEnd();
+            }}
             onDragOver={(e) => {
                 if (isFolder && !selectedIds.includes(file.id)) {
                     e.preventDefault();

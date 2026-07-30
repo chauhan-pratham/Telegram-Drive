@@ -10,7 +10,7 @@ pub async fn cmd_get_enriched_folders(
     let conn = db_pool.lock().map_err(|e| e.to_string())?;
     
     let query = "
-        SELECT channel_id, name, username, is_public, display_order, group_id 
+        SELECT channel_id, name, username, is_public, display_order, group_id, parent_id 
         FROM folder_metadata 
         ORDER BY display_order ASC
     ";
@@ -23,10 +23,11 @@ pub async fn cmd_get_enriched_folders(
         let is_public: i64 = row.get(3)?;
         let display_order: i64 = row.get(4)?;
         let group_id: Option<i64> = row.get(5)?;
+        let parent_id: Option<i64> = row.get(6)?;
 
         Ok(FolderMetadata {
             id: channel_id,
-            parent_id: None,
+            parent_id,
             name,
             username,
             is_public: is_public != 0,
@@ -65,9 +66,9 @@ pub fn get_enriched_folders_internal(
     conn: &Connection,
     raw_folders: Vec<FolderMetadata>,
 ) -> Result<Vec<FolderMetadata>, String> {
-    // 1. Fetch local folder metadata (group_id, display_order)
+    // 1. Fetch local folder metadata (group_id, display_order, parent_id)
     let mut stmt = conn
-        .prepare("SELECT channel_id, display_order, group_id FROM folder_metadata")
+        .prepare("SELECT channel_id, display_order, group_id, parent_id FROM folder_metadata")
         .map_err(|e| e.to_string())?;
         
     let mut local_map = std::collections::HashMap::new();
@@ -75,7 +76,8 @@ pub fn get_enriched_folders_internal(
         let channel_id: i64 = row.get(0)?;
         let display_order: i64 = row.get(1)?;
         let group_id: Option<i64> = row.get(2)?;
-        Ok((channel_id, (display_order as i32, group_id.map(|id| id as i32))))
+        let parent_id: Option<i64> = row.get(3)?;
+        Ok((channel_id, (display_order as i32, group_id.map(|id| id as i32), parent_id)))
     }).map_err(|e| e.to_string())?;
 
     for r in rows {
@@ -86,19 +88,23 @@ pub fn get_enriched_folders_internal(
     
     // 2. Perform merge & upsert
     let mut enriched = Vec::new();
-    let mut max_order = local_map.values().map(|(o, _)| *o).max().unwrap_or(0);
+    let mut max_order = local_map.values().map(|(o, _, _)| *o).max().unwrap_or(0);
     
     for mut folder in raw_folders {
-        if let Some(&(order, group_id)) = local_map.get(&folder.id) {
+        if let Some(&(order, group_id, local_parent_id)) = local_map.get(&folder.id) {
             folder.display_order = order;
             folder.group_id = group_id;
+            if folder.parent_id.is_none() {
+                folder.parent_id = local_parent_id;
+            }
             
             conn.execute(
-                "UPDATE folder_metadata SET name = ?, username = ?, is_public = ? WHERE channel_id = ?",
+                "UPDATE folder_metadata SET name = ?, username = ?, is_public = ?, parent_id = ? WHERE channel_id = ?",
                 params![
                     folder.name.as_str(),
                     folder.username.as_deref(),
                     if folder.is_public { 1 } else { 0 },
+                    folder.parent_id,
                     folder.id
                 ]
             ).map_err(|e| e.to_string())?;
@@ -108,13 +114,14 @@ pub fn get_enriched_folders_internal(
             folder.group_id = None;
             
             conn.execute(
-                "INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, ?, NULL)",
+                "INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id, parent_id) VALUES (?, ?, ?, ?, ?, NULL, ?)",
                 params![
                     folder.id,
                     folder.name.as_str(),
                     folder.username.as_deref(),
                     if folder.is_public { 1 } else { 0 },
-                    max_order as i64
+                    max_order as i64,
+                    folder.parent_id
                 ]
             ).map_err(|e| e.to_string())?;
         }

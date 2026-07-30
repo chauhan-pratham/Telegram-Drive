@@ -66,6 +66,7 @@ pub struct Drive {
 pub struct FolderManifestEntry {
     pub id: i64,
     pub name: String,
+    pub parent_id: Option<i64>,
     pub username: Option<String>,
     pub is_public: bool,
     pub display_order: i32,

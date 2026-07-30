@@ -20,7 +20,6 @@ import { Toaster, toast } from "sonner";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import { ThemeProvider, useTheme } from "./context/ThemeContext";
 import { SettingsProvider, useSettings } from "./context/SettingsContext";
-import { useTranslation } from "react-i18next";
 import { DriveProvider } from "./context/DriveContext";
 
 const queryClient = new QueryClient();
@@ -33,9 +32,41 @@ function AppContent() {
   const { available, version, downloading, progress, downloadAndInstall, dismissUpdate } = useUpdateCheck();
   const { isMobile } = usePlatform();
   const { settings, updateSetting, isLoaded } = useSettings();
-  const { i18n } = useTranslation();
+
+  useEffect(() => {
+    document.documentElement.dir = 'ltr';
+    document.documentElement.lang = 'en';
+  }, []);
 
   const zoomRef = useRef<number>(1.0);
+
+  useEffect(() => {
+    const logFrontendError = (message: string) => {
+      invoke("cmd_log_error", { message: message.slice(0, 8_000) }).catch(() => {});
+    };
+
+    const handleWindowError = (event: ErrorEvent) => {
+      const location = event.filename
+        ? `${event.filename}:${event.lineno}:${event.colno}`
+        : "unknown location";
+      const stack = event.error instanceof Error ? `\n${event.error.stack ?? ""}` : "";
+      logFrontendError(`[window.error] ${event.message} at ${location}${stack}`);
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error
+        ? `${event.reason.message}\n${event.reason.stack ?? ""}`
+        : String(event.reason);
+      logFrontendError(`[window.unhandledrejection] ${reason}`);
+    };
+
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, []);
 
   // Initialize zoom factor from persistent store on mount
   useEffect(() => {
@@ -99,13 +130,11 @@ function AppContent() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [adjustZoom, resetZoom]);
 
-  // Handle active language and RTL direction changes
+  // Enforce English language and LTR direction statically
   useEffect(() => {
-    if (!isLoaded) return;
-    i18n.changeLanguage(settings.language);
-    document.documentElement.lang = settings.language;
-    document.documentElement.dir = (settings.language as string) === 'ar' ? 'rtl' : 'ltr';
-  }, [settings.language, isLoaded, i18n]);
+    document.documentElement.lang = 'en';
+    document.documentElement.dir = 'ltr';
+  }, []);
 
   // Performance mode: auto-enable when user has prefers-reduced-motion
   useEffect(() => {
@@ -164,14 +193,6 @@ function AppContent() {
         }
       } catch (err) {
         console.warn("Session restore failed, showing login:", err);
-        // Session file is corrupt or revoked — clean up and show login
-        try {
-          const store = await load("config.json");
-          await store.delete("api_id");
-          await store.save();
-        } catch {
-          // best-effort cleanup
-        }
         setAuthStatus("unauthenticated");
       }
     };

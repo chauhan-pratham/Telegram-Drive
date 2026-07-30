@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Folder, Download, RefreshCw, UploadCloud, Trash2, Pencil, Shield, ChevronDown, Share2, Link, Copy, Check, X, Loader2, Wifi, Activity, Zap, Eye, EyeOff, Search, Plus, Star, LayoutGrid, List, FolderPlus, MoreVertical, HardDrive, Menu, ArrowUp, ArrowDown, LogOut, Settings, Clock, Users, ArrowLeft, AlertCircle, CheckCircle2, HelpCircle, Cloud, Sliders, Info, CheckSquare } from 'lucide-react';
+import { Folder, Download, RefreshCw, UploadCloud, Trash2, Pencil, Shield, ChevronDown, Share2, Link, Copy, X, Loader2, Wifi, Activity, Zap, Eye, EyeOff, Search, Plus, Star, LayoutGrid, List, FolderPlus, MoreVertical, HardDrive, Menu, ArrowUp, ArrowDown, LogOut, Settings, Clock, Users, ArrowLeft, AlertCircle, CheckCircle2, HelpCircle, Cloud, Sliders, Info, CheckSquare } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
@@ -17,20 +17,17 @@ import { useTelegramConnection } from '../../hooks/useTelegramConnection';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useFileDownload } from '../../hooks/useFileDownload';
 import { useFileOperations } from '../../hooks/useFileOperations';
-import { formatBytes, isMediaFile, isPdfFile, isImageFile, nativeShareOrCopy, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isPdfFile, isImageFile, copyToClipboard } from '../../utils';
 import { MediaPlayer } from '../desktop/dashboard/MediaPlayer';
 import { PdfViewer } from '../desktop/dashboard/PdfViewer';
 import { PreviewModal } from '../desktop/dashboard/PreviewModal';
 import { useTheme } from '../../context/ThemeContext';
 import { useDrive } from '../../context/DriveContext';
-import { TelegramFile, TelegramFolder, ShareInfo, BandwidthStats } from '../../types';
+import { TelegramFile, TelegramFolder, BandwidthStats } from '../../types';
 import { useSettings } from '../../context/SettingsContext';
 import { version as appVersion } from '../../../package.json';
-import { LANGUAGES } from '../../i18n/languages';
-import { useTranslation } from 'react-i18next';
 
 export default function MobileDashboard({ onLogout }: { onLogout?: () => void }) {
-  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<MobileTab>('home');
   const [_activeSubTab, _setActiveSubTab] = useState<'my-drive' | 'computers'>('my-drive');
@@ -220,10 +217,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
   const [pdfFile, setPdfFile] = useState<TelegramFile | null>(null);
   const [previewFile, setPreviewFile] = useState<TelegramFile | null>(null);
-  const [_shareFile, setShareFile] = useState<TelegramFile | null>(null);
-  const [bulkShareLinks, setBulkShareLinks] = useState<Array<{ file: TelegramFile; link: string }> | null>(null);
-  const [bulkShareLoading, setBulkShareLoading] = useState(false);
-  const [bulkShareCopied, setBulkShareCopied] = useState<Set<string>>(new Set());
   const [uploadingCacheFiles, setUploadingCacheFiles] = useState<Set<string>>(new Set());
   const transferIdCounter = useRef(0);
 
@@ -531,64 +524,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     setRenameFile({ id: file.id, currentName });
   }, [fileRenames]);
 
-  // Bulk share: generate links for all selected non-folder files
-  const handleBulkShare = useCallback(async () => {
-    const shareFiles = allFiles.filter(f => selectedIds.includes(f.id) && f.type !== 'folder');
-    if (shareFiles.length === 0) {
-      toast.info('No shareable files selected (folders cannot be shared)');
-      return;
-    }
-    // Open modal immediately with spinner
-    setBulkShareLinks([]);
-    setBulkShareLoading(true);
-    setBulkShareCopied(new Set());
-    try {
-      const results = await Promise.all(
-        shareFiles.map(async (file) => {
-          try {
-            const info = await invoke<ShareInfo>('cmd_create_share', {
-              folderId: file.folder_id ?? null,
-              messageId: file.id,
-              fileName: file.name,
-              fileSize: file.size,
-              password: null,
-              expiryHours: 24, // default 1 day
-            });
-            return { file, link: info.link };
-          } catch (e) {
-            toast.error(`Failed to share ${file.name}: ${e}`);
-            return null;
-          }
-        })
-      );
-      const valid = results.filter((r): r is { file: TelegramFile; link: string } => r !== null);
-      if (valid.length > 0) {
-        setBulkShareLinks(valid);
-        setSelectedIds([]); // Clear selection after successful bulk share
-      } else {
-        setBulkShareLinks(null);
-        toast.error('Failed to generate any share links');
-      }
-    } finally {
-      setBulkShareLoading(false);
-    }
-  }, [allFiles, selectedIds]);
-
-  const handleCopyBulkLink = useCallback((link: string) => {
-    navigator.clipboard.writeText(link);
-    setBulkShareCopied(prev => new Set(prev).add(link));
-    setTimeout(() => setBulkShareCopied(prev => {
-      const next = new Set(prev);
-      next.delete(link);
-      return next;
-    }), 2000);
-  }, []);
-
-  const handleNativeShareBulkLink = useCallback((file: TelegramFile, link: string) => {
-    nativeShareOrCopy(file.name, file.sizeStr, link, () => {
-      handleCopyBulkLink(link);
-    });
-  }, [handleCopyBulkLink]);
 
   const handleCopyTelegramLink = useCallback((file: TelegramFile) => {
     const folder = folders.find(f => f.id === file.folder_id) || folders.find(f => f.id === activeFolderId);
@@ -721,7 +656,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
   const displayFolders = useMemo(() => {
     const trashedFolderIds = new Set(trashedFolders.map(tf => tf.id));
-    const activeF = folders.filter(f => !trashedFolderIds.has(f.id));
+    const activeF = folders.filter(f => !trashedFolderIds.has(f.id) && (activeFolderId === null ? (!f.parent_id || f.parent_id === 0) : f.parent_id === activeFolderId));
     if (activeFolderId === null) {
       const virtualFolder: TelegramFolder = {
         id: -999,
@@ -1289,7 +1224,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                       onDelete={handleDeleteFile}
                       onPreview={handlePreview}
                       onRename={handleRenameFile}
-                      onShare={setShareFile}
                       onCopyTelegramLink={handleCopyTelegramLink}
                       selectedIds={selectedIds}
                       onToggleSelection={handleToggleSelection}
@@ -1434,7 +1368,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
 
             {/* Folders Section: List view vs Grid view based on viewMode */}
-            {activeFolderId === null && (categoryFilter === 'all' || categoryFilter === 'folders') && displayFolders.length > 0 && (
+            {(categoryFilter === 'all' || categoryFilter === 'folders') && displayFolders.length > 0 && (
               <div className="space-y-2 mb-4">
                 <div className={viewMode === 'grid' ? "grid grid-cols-2 gap-3.5" : "space-y-2"}>
                   {displayFolders.map((folder, idx) => {
@@ -1514,9 +1448,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 onDelete={handleDeleteFile}
                 onPreview={handlePreview}
                 onRename={handleRenameFile}
-                onShare={setShareFile}
                 onCopyTelegramLink={handleCopyTelegramLink}
-                onBulkShare={handleBulkShare}
                 selectedIds={selectedIds}
                 onToggleSelection={handleToggleSelection}
                 onSelectAll={handleSelectAll}
@@ -1635,7 +1567,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                       onDelete={handleDeleteFile}
                       onPreview={handlePreview}
                       onRename={handleRenameFile}
-                      onShare={setShareFile}
                       onCopyTelegramLink={handleCopyTelegramLink}
                       selectedIds={selectedIds}
                       onToggleSelection={handleToggleSelection}
@@ -1712,7 +1643,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   onDelete={handleDeleteFile}
                   onPreview={handlePreview}
                   onRename={handleRenameFile}
-                  onShare={setShareFile}
                   onCopyTelegramLink={handleCopyTelegramLink}
                   selectedIds={selectedIds}
                   onToggleSelection={handleToggleSelection}
@@ -1847,7 +1777,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                           onDelete={handleDeleteFile}
                           onPreview={handlePreview}
                           onRename={handleRenameFile}
-                          onShare={setShareFile}
                           onCopyTelegramLink={handleCopyTelegramLink}
                           selectedIds={selectedIds}
                           onToggleSelection={handleToggleSelection}
@@ -1993,7 +1922,6 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                           onDelete={handleDeleteFile}
                           onPreview={handlePreview}
                           onRename={handleRenameFile}
-                          onShare={setShareFile}
                           onCopyTelegramLink={handleCopyTelegramLink}
                           selectedIds={selectedIds}
                           onToggleSelection={handleToggleSelection}
@@ -2225,7 +2153,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Sliders className="w-3.5 h-3.5" />
-                {t('common.preferences')}
+                Preferences
               </h3>
               
               {/* Theme Setting */}
@@ -2250,8 +2178,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* ZIP Folders Before Upload */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div className="pr-4">
-                  <p className="text-sm font-semibold text-white/95">{t('settings.zip_before_upload')}</p>
-                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">{t('settings.zip_folders_desc')}</p>
+                  <p className="text-sm font-semibold text-white/95">ZIP Folders Before Upload</p>
+                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">Automatically zip folders before uploading them to Telegram.</p>
                 </div>
                 <button
                   onClick={() => updateSetting('zipFolders', !settings.zipFolders)}
@@ -2261,46 +2189,25 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 </button>
               </div>
 
-              {/* Language Selection */}
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <p className="text-sm font-semibold text-white/95">{t('common.language')}</p>
-                  <p className="text-xs text-white/55 mt-0.5">{t('settings.select_app_language')}</p>
-                </div>
-                <div className="relative">
-                  <select
-                    value={settings.language}
-                    onChange={e => updateSetting('language', e.target.value as any)}
-                    className="appearance-none bg-[#18151f] border border-white/15 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-white focus:outline-none focus:border-telegram-primary transition cursor-pointer shadow-inner"
-                  >
-                    {LANGUAGES.map(lang => (
-                      <option key={lang.code} value={lang.code}>
-                        {lang.nativeLabel}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-white/50 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                </div>
-              </div>
             </div>
 
             {/* Connection Diagnostics */}
             <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Wifi className="w-3.5 h-3.5" />
-                {t('settings.connection_diagnostics')}
+                Connection Diagnostics
               </h3>
 
               {/* Connection status indicator */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div className="flex items-center gap-2.5">
                   <Activity className="w-4 h-4 text-white/60" />
-                  <p className="text-sm font-semibold text-white/95">{t('common.status')}</p>
+                  <p className="text-sm font-semibold text-white/95">Status</p>
                 </div>
                 <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
                   <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-red-500'}`} />
                   <span className={`text-xs font-bold ${isConnected ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {isConnected ? t('common.connected_telegram') : t('settings.offline')}
+                    {isConnected ? 'Connected to Telegram' : 'Offline'}
                   </span>
                 </div>
               </div>
@@ -2308,13 +2215,13 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Ping test */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">{t('common.ping')}</p>
+                  <p className="text-sm font-semibold text-white/95">Ping</p>
                   <p className="text-xs text-white/55 mt-0.5 font-medium">
                     {latencyMs !== null
                       ? latencyMs >= 0
                         ? `${latencyMs} ms`
-                        : t('settings.offline')
-                      : t('settings.not_tested')}
+                        : 'Offline'
+                      : 'Not tested'}
                   </p>
                 </div>
                 <button
@@ -2325,12 +2232,12 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   {checkingLatency ? (
                     <>
                       <div className="w-3.5 h-3.5 border-2 border-telegram-primary/30 border-t-telegram-primary rounded-full animate-spin" />
-                      {t('settings.testing')}
+                      Testing...
                     </>
                   ) : (
                     <>
                       <Zap className="w-3.5 h-3.5" />
-                      {t('settings.check_ping')}
+                      Check Ping
                     </>
                   )}
                 </button>
@@ -2346,7 +2253,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                     />
                   </div>
                   <span className={`text-xs font-bold uppercase tracking-wider ${latencyMs < 100 ? 'text-emerald-400' : latencyMs < 250 ? 'text-amber-400' : 'text-red-400'}`}>
-                    {latencyMs < 100 ? t('settings.excellent') : latencyMs < 250 ? t('settings.good') : t('settings.slow')}
+                    {latencyMs < 100 ? 'Excellent' : latencyMs < 250 ? 'Good' : 'Slow'}
                   </span>
                 </div>
               )}
@@ -2355,8 +2262,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {bandwidth && (
                 <div className="flex items-center justify-between py-2">
                   <div>
-                    <p className="text-sm font-semibold text-white/95">{t('common.usage')}</p>
-                    <p className="text-xs text-white/55 mt-0.5">{t('settings.up_down_since_connected')}</p>
+                    <p className="text-sm font-semibold text-white/95">Bandwidth Usage</p>
+                    <p className="text-xs text-white/55 mt-0.5">Upload / Download since connected</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs font-mono font-bold text-white bg-[#18151f] px-3 py-1.5 rounded-xl border border-white/10 shadow-inner">
@@ -2373,14 +2280,14 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Shield className="w-3.5 h-3.5" />
-                {t('common.proxy')}
+                Proxy
               </h3>
 
               {/* Enable Proxy Toggle */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div className="pr-4">
-                  <p className="text-sm font-semibold text-white/95">{t('common.enable_proxy')}</p>
-                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">{t('settings.enable_proxy_desc')}</p>
+                  <p className="text-sm font-semibold text-white/95">Enable Proxy</p>
+                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">Route connections through a proxy server for improved privacy or access.</p>
                 </div>
                 <button
                   onClick={() => updateSetting('proxyEnabled', !settings.proxyEnabled)}
@@ -2393,8 +2300,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Proxy Type */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">{t('common.proxy_type')}</p>
-                  <p className="text-xs text-white/55 mt-0.5">{t('settings.socks5_desc_mobile')}</p>
+                  <p className="text-sm font-semibold text-white/95">Proxy Type</p>
+                  <p className="text-xs text-white/55 mt-0.5">SOCKS5 is the only supported proxy type.</p>
                 </div>
                 <div className="relative">
                   <select
@@ -2411,8 +2318,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Host */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">{t('common.host')}</p>
-                  <p className="text-xs text-white/55 mt-0.5">{t('settings.host_desc')}</p>
+                  <p className="text-sm font-semibold text-white/95">Host</p>
+                  <p className="text-xs text-white/55 mt-0.5">IP address or hostname of the proxy server.</p>
                 </div>
                 <input
                   type="text"
@@ -2426,8 +2333,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Port */}
               <div className="flex items-center justify-between py-2 border-b border-white/5">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">{t('common.port')}</p>
-                  <p className="text-xs text-white/55 mt-0.5">{t('settings.port_desc')}</p>
+                  <p className="text-sm font-semibold text-white/95">Port</p>
+                  <p className="text-xs text-white/55 mt-0.5">Port number of the proxy server (1–65535).</p>
                 </div>
                 <input
                   type="number"
@@ -2444,12 +2351,12 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 <>
                   <div className="flex items-center justify-between py-2 border-b border-white/5">
                     <div>
-                      <p className="text-sm font-semibold text-white/95">{t('common.username')}</p>
-                      <p className="text-xs text-white/55 mt-0.5">{t('settings.optional')}</p>
+                      <p className="text-sm font-semibold text-white/95">Username</p>
+                      <p className="text-xs text-white/55 mt-0.5">Optional</p>
                     </div>
                     <input
                       type="text"
-                      placeholder={t('settings.optional')}
+                      placeholder="Optional"
                       value={settings.proxyUsername}
                       onChange={e => updateSetting('proxyUsername', e.target.value)}
                       className="w-36 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-white/30 shadow-inner"
@@ -2457,12 +2364,12 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   </div>
                   <div className="flex items-center justify-between py-2">
                     <div>
-                      <p className="text-sm font-semibold text-white/95">{t('common.password')}</p>
-                      <p className="text-xs text-white/55 mt-0.5">{t('settings.optional')}</p>
+                      <p className="text-sm font-semibold text-white/95">Password</p>
+                      <p className="text-xs text-white/55 mt-0.5">Optional</p>
                     </div>
                     <input
                       type="password"
-                      placeholder={t('settings.optional')}
+                      placeholder="Optional"
                       value={settings.proxyPassword}
                       onChange={e => updateSetting('proxyPassword', e.target.value)}
                       className="w-36 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-white/30 shadow-inner"
@@ -2474,7 +2381,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Info note */}
               <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20">
                 <p className="text-xs text-amber-300/90 leading-relaxed font-normal">
-                  {t('settings.proxy_reconnect_note')}
+                  Changes take effect after reconnecting to Telegram.
                 </p>
               </div>
             </div>
@@ -2484,7 +2391,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
                 <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                   <Share2 className="w-3.5 h-3.5" />
-                  {t('settings.shared_files', { count: cachedFiles.length })}
+                  Shared Files ({cachedFiles.length})
                 </h3>
                 <div className="space-y-2.5">
                   {cachedFiles.map((entry) => {
@@ -2506,12 +2413,12 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                           {isUploading ? (
                             <>
                               <div className="w-3.5 h-3.5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
-                              {t('settings.uploading')}
+                              Uploading...
                             </>
                           ) : (
                             <>
                               <UploadCloud className="w-3.5 h-3.5" />
-                              {t('common.upload')}
+                              Upload
                             </>
                           )}
                         </button>
@@ -2523,7 +2430,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   onClick={handleClearCachedSharedFiles}
                   className="w-full text-center text-xs font-semibold text-red-400/80 hover:text-red-400 transition-colors py-1 cursor-pointer"
                 >
-                  {t('settings.clear_shared_files')}
+                  Clear Shared Files
                 </button>
               </div>
             )}
@@ -2532,7 +2439,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             <div className="p-6 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg text-center space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center justify-center gap-2">
                 <Info className="w-3.5 h-3.5" />
-                {t('common.about')}
+                About
               </h3>
               <div className="flex flex-col items-center py-2 space-y-3">
                 <div className="w-16 h-16 rounded-2xl bg-telegram-primary/10 border border-telegram-primary/20 p-2 flex items-center justify-center shadow-lg">
@@ -2752,6 +2659,9 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             file={playingFile}
             onClose={() => setPlayingFile(null)}
             activeFolderId={activeFolderId}
+            onDownload={handleDownload}
+            onShare={handleCopyTelegramLink}
+            onDelete={handleDeleteFile}
           />
         </div>
       )}
@@ -2761,6 +2671,9 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             file={pdfFile}
             onClose={() => setPdfFile(null)}
             activeFolderId={activeFolderId}
+            onDownload={handleDownload}
+            onShare={handleCopyTelegramLink}
+            onDelete={handleDeleteFile}
           />
         </div>
       )}
@@ -2770,94 +2683,15 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           activeFolderId={activeFolderId}
           folders={folders}
           onClose={() => setPreviewFile(null)}
+          onDownload={handleDownload}
+          onShare={handleCopyTelegramLink}
+          onDelete={handleDeleteFile}
         />
       )}
 
 
-      {/* Bulk Share Results Modal */}
-      {bulkShareLinks && (
-        <div
-          className="fixed inset-0 z-[150] flex items-end justify-center bg-black/50 backdrop-blur-sm"
-          onClick={() => setBulkShareLinks(null)}
-        >
-          <div
-            className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-5 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[70vh] flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            {/* Drag handle */}
-            <div className="flex justify-center mb-4">
-              <div className="w-10 h-1 rounded-full bg-white/20" />
-            </div>
 
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Link className="w-4 h-4 text-telegram-primary" />
-                {bulkShareLinks.length} Share Link{bulkShareLinks.length !== 1 ? 's' : ''}
-              </h3>
-              <button
-                onClick={() => setBulkShareLinks(null)}
-                className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
 
-            {bulkShareLoading ? (
-              <div className="flex flex-col items-center justify-center py-12 space-y-3">
-                <Loader2 className="w-8 h-8 text-telegram-primary animate-spin" />
-                <p className="text-xs text-telegram-subtext">Generating share links...</p>
-              </div>
-            ) : (
-              <div className="flex-1 overflow-y-auto space-y-2 min-h-0">
-                {bulkShareLinks.map(({ file, link }) => {
-                  const isCopied = bulkShareCopied.has(link);
-                  return (
-                    <div
-                      key={file.id}
-                      className="p-3 rounded-xl bg-white/5 border border-white/5 space-y-2"
-                    >
-                      <p className="text-xs font-semibold text-white truncate">{file.name}</p>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          readOnly
-                          value={link}
-                          className="flex-1 bg-black/30 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-telegram-subtext focus:outline-none select-all truncate"
-                        />
-                        <button
-                          onClick={() => handleCopyBulkLink(link)}
-                          className={`px-2.5 py-1.5 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
-                            isCopied
-                              ? 'bg-emerald-500 border-emerald-500 text-white'
-                              : 'bg-white/10 border border-white/10 text-telegram-subtext hover:bg-white/20'
-                          }`}
-                        >
-                          {isCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                        {typeof navigator !== 'undefined' && typeof navigator.share === 'function' && (
-                          <button
-                            onClick={() => handleNativeShareBulkLink(file, link)}
-                            className="px-2.5 py-1.5 rounded-lg bg-telegram-primary/20 hover:bg-telegram-primary/30 text-telegram-primary border border-telegram-primary/30 transition-all flex items-center justify-center flex-shrink-0"
-                          >
-                            <Share2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <button
-              onClick={() => setBulkShareLinks(null)}
-              className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold bg-white/5 text-telegram-subtext hover:bg-white/10 border border-white/5 transition-all duration-200 active:scale-[0.98] flex-shrink-0"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Suggested Card File Action Popover Sheet */}
       {actionMenuFile && (
@@ -2938,7 +2772,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       {showCreateFolderSheet && (
         <CreateFolderSheet
           onCreate={async (name) => {
-            await handleCreateFolder(name);
+            await handleCreateFolder(name, activeFolderId);
           }}
           onClose={() => setShowCreateFolderSheet(false)}
         />

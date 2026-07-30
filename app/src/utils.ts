@@ -23,7 +23,7 @@ export function formatBytes(bytes: number, decimals = 2) {
 
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'mkv', 'avi', 'flv', 'm4v'] as const;
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'aac', 'flac', 'm4a', 'opus'] as const;
-const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'heic', 'heif'] as const;
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico', 'heic', 'heif'] as const;
 
 const endsWithAny = (name: string, exts: readonly string[]) => {
     const lower = name.toLowerCase();
@@ -49,7 +49,6 @@ export const isMediaFile = (name: string, mime?: string) => {
 export const isImageFile = (name: string, mime?: string) => {
     if (endsWithAny(name, IMAGE_EXTENSIONS)) return true;
     if (mime && mime.toLowerCase().startsWith('image/')) return true;
-    // Special case: check if hardcoded photo name
     if (name.toLowerCase() === 'photo.jpg') return true;
     return false;
 };
@@ -59,10 +58,6 @@ export const isPdfFile = (name: string, mime?: string) => {
     if (mime && mime.toLowerCase() === 'application/pdf') return true;
     return false;
 };
-
-export const isZipFile     = (name: string) => name.toLowerCase().endsWith('.zip');
-export const isRarFile     = (name: string) => name.toLowerCase().endsWith('.rar');
-export const isSevenZFile  = (name: string) => name.toLowerCase().endsWith('.7z');
 
 export const isArchiveFile = (name: string, mime?: string) => {
     const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'] as const;
@@ -84,8 +79,6 @@ export const isArchiveFile = (name: string, mime?: string) => {
 };
 
 // ── HTML file input fallback for when Tauri dialog open() fails ──────────
-// Creates a hidden <input type="file"> element, triggers it, and returns
-// a Promise of file paths extracted from the Tauri webview File.path property.
 
 export interface FileDialogFallbackOptions {
   directory?: boolean;
@@ -93,9 +86,6 @@ export interface FileDialogFallbackOptions {
 }
 
 // ── Retry + HTML fallback wrapper for Tauri dialogs ────────────────────
-// Wraps any Tauri dialog call (open/save) with automatic retry + Browser
-// Picker fallback on error. Returns the dialog result, or null if cancelled
-// or the error was handled (toast shown, retry invoked, etc.).
 
 export async function pickWithFallback<T>(
     dialogFn: () => Promise<T | null>,
@@ -156,22 +146,17 @@ export async function pickWithFallback<T>(
 }
 
 // ── Clipboard utility ────────────────────────────────────────────────
-// Uses Tauri's clipboard plugin on desktop (bypasses the user-gesture
-// requirement that breaks navigator.clipboard.writeText after an await).
-// On platforms where the plugin isn't available, falls back to the
-// Web Clipboard API.
+
 export async function copyToClipboard(text: string): Promise<void> {
     try {
         await writeText(text);
     } catch {
-        // Fallback to Web API (works on mobile or if plugin not initialized)
         await navigator.clipboard.writeText(text);
     }
 }
 
 // ── Native Share API helper ────────────────────────────────────────────
-// Attempts navigator.share (Android/iOS share sheet). Falls back to
-// clipboard copy if not available or if sharing fails.
+
 export async function nativeShareOrCopy(
     name: string,
     sizeStr: string,
@@ -193,7 +178,6 @@ export async function nativeShareOrCopy(
             }
         }
     }
-    // Fallback: copy to clipboard
     if (onCopy) {
         onCopy(link);
     } else {
@@ -216,14 +200,12 @@ export function showFileDialogFallback(options: FileDialogFallbackOptions = {}):
     let focusTimeout: ReturnType<typeof setTimeout> | undefined;
     let resolved = false;
 
-    // Clean up all listeners, timeouts, and DOM elements
     const cleanup = () => {
       window.removeEventListener('focus', onFocus);
       if (focusTimeout) clearTimeout(focusTimeout);
       input.remove();
     };
 
-    // Resolve once and clean up (prevents double-resolve from onchange + focus paths)
     const finish = (paths: string[]) => {
       if (resolved) return;
       resolved = true;
@@ -244,12 +226,9 @@ export function showFileDialogFallback(options: FileDialogFallbackOptions = {}):
       finish(paths);
     };
 
-    // Detect cancellation by watching for window focus return.
-    // When a native file dialog closes (select or cancel), the window regains focus.
     const onFocus = () => {
       window.removeEventListener('focus', onFocus);
       focusTimeout = setTimeout(() => {
-        // If input is still in the DOM, onchange never fired → user cancelled
         if (input.parentNode) {
           finish([]);
         }
@@ -257,7 +236,6 @@ export function showFileDialogFallback(options: FileDialogFallbackOptions = {}):
     };
     window.addEventListener('focus', onFocus);
 
-    // Append to body (hidden) and click to trigger the native dialog
     input.style.display = 'none';
     document.body.appendChild(input);
     input.click();
@@ -273,9 +251,6 @@ export function sanitizeFilename(name: string): string {
 }
 
 // ── Drag ghost utility ────────────────────────────────────────────────
-// Creates a mini card-like element for use with dataTransfer.setDragImage()
-// during HTML5 drag operations. Uses inline styles (not Tailwind classes)
-// since dynamic elements aren't scanned by the JIT compiler.
 
 export function createDragGhost(name: string, isFolder?: boolean, count?: number): HTMLElement {
     const ghost = document.createElement('div');
@@ -294,14 +269,12 @@ export function createDragGhost(name: string, isFolder?: boolean, count?: number
     ghost.style.boxShadow = '0 4px 16px rgba(0,0,0,0.3)';
     ghost.style.maxWidth = '220px';
 
-    // Icon indicator
     const icon = document.createElement('span');
     icon.style.flexShrink = '0';
     icon.style.fontSize = '16px';
     icon.textContent = isFolder ? '📁' : '📄';
     ghost.appendChild(icon);
 
-    // Filename
     const label = document.createElement('span');
     label.style.fontSize = '12px';
     label.style.fontWeight = '500';
@@ -312,7 +285,6 @@ export function createDragGhost(name: string, isFolder?: boolean, count?: number
     label.textContent = name;
     ghost.appendChild(label);
 
-    // Count badge — shown when moving multiple files
     if (count && count > 1) {
         const badge = document.createElement('span');
         badge.style.flexShrink = '0';
@@ -353,4 +325,3 @@ export function formatDate(timestampStr?: string) {
         return timestampStr;
     }
 }
-

@@ -1,13 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, File, ChevronLeft, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { TelegramFile, TelegramFolder } from '../../../types';
-import { isImageFile, isMediaFile, isPdfFile, isArchiveFile } from '../../../utils';
+import { isImageFile, isMediaFile, isPdfFile } from '../../../utils';
 import { MediaPlayer } from './MediaPlayer';
 import { PdfViewer } from './PdfViewer';
-import { ArchiveViewerModal } from './ArchiveViewerModal';
-import { toast } from 'sonner';
 
 const PREVIEW_CACHE_TTL_MS = 5 * 60 * 1000;
 const PREVIEW_CACHE_MAX_ITEMS = 8;
@@ -67,14 +65,17 @@ interface PreviewModalProps {
     prevFile?: TelegramFile | null;
     activeFolderId: number | null;
     folders?: TelegramFolder[];
+    onDownload?: (file: TelegramFile) => void;
+    onShare?: (file: TelegramFile) => void;
+    onDelete?: (file: TelegramFile) => void;
 }
 
+
 export function PreviewModal(props: PreviewModalProps) {
-    const { file, activeFolderId, onClose, onNext, onPrev, currentIndex, totalItems, nextFile, prevFile, folders = [] } = props;
+    const { file, activeFolderId, onClose, onNext, onPrev, currentIndex, totalItems, onDownload, onShare, onDelete } = props;
 
     const isMedia = isMediaFile(file.name, file.mime_type);
     const isPdf = isPdfFile(file.name, file.mime_type);
-    const isArchive = isArchiveFile(file.name, file.mime_type);
 
     if (isMedia) {
         return (
@@ -86,6 +87,9 @@ export function PreviewModal(props: PreviewModalProps) {
                 onPrev={onPrev}
                 currentIndex={currentIndex}
                 totalItems={totalItems}
+                onDownload={onDownload}
+                onShare={onShare}
+                onDelete={onDelete}
             />
         );
     }
@@ -100,29 +104,20 @@ export function PreviewModal(props: PreviewModalProps) {
                 onPrev={onPrev}
                 currentIndex={currentIndex}
                 totalItems={totalItems}
+                onDownload={onDownload}
+                onShare={onShare}
+                onDelete={onDelete}
             />
         );
     }
 
-    if (isArchive) {
-        return (
-            <ArchiveViewerModal
-                file={file}
-                activeFolderId={activeFolderId}
-                folders={folders}
-                onClose={onClose}
-                onNext={onNext}
-                onPrev={onPrev}
-                currentIndex={currentIndex}
-                totalItems={totalItems}
-                nextFile={nextFile}
-                prevFile={prevFile}
-            />
-        );
+    if (isImageFile(file.name, file.mime_type)) {
+        return <ImagePreviewModal {...props} />;
     }
 
-    return <ImagePreviewModal {...props} />;
+    return null;
 }
+
 
 function ImagePreviewModal({
     file,
@@ -132,25 +127,15 @@ function ImagePreviewModal({
     nextFile,
     prevFile,
     activeFolderId,
+    onDownload,
+    onShare: _onShare,
+    onDelete,
 }: PreviewModalProps) {
     const [src, setSrc] = useState<string | null>(null);
-    const [openingNative, setOpeningNative] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const latestRequestRef = useRef(0);
     const hasRetriedRef = useRef(false);
-
-    const handleOpenNative = async () => {
-        setOpeningNative(true);
-        try {
-            const actualFolderId = activeFolderId === -999 ? null : (activeFolderId ?? null);
-            await invoke('cmd_open_file_externally', { messageId: file.id, folderId: actualFolderId });
-        } catch (e) {
-            toast.error(`Failed to open natively: ${e}`);
-        } finally {
-            setOpeningNative(false);
-        }
-    };
 
     useEffect(() => {
         hasRetriedRef.current = false;
@@ -278,7 +263,7 @@ function ImagePreviewModal({
                     <button
                         onClick={onClose}
                         className="p-1.5 rounded-full hover:bg-white/10 text-white cursor-pointer transition active:scale-95 shrink-0"
-                        title="Back"
+                        title="Back (Esc)"
                     >
                         <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
@@ -287,28 +272,38 @@ function ImagePreviewModal({
                     </h2>
                 </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                        onClick={handleOpenNative}
-                        disabled={openingNative}
-                        className="p-1.5 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 shrink-0 cursor-pointer"
-                        title="Open in System App"
-                    >
-                        <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
-                    </button>
+                <div className="flex items-center gap-2 shrink-0">
+                    {onDownload && (
+                        <button
+                            onClick={() => onDownload(file)}
+                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all shrink-0 cursor-pointer"
+                            title="Download"
+                        >
+                            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
+                    {onDelete && (
+                        <button
+                            onClick={() => { onDelete(file); onClose(); }}
+                            className="p-2 text-red-400 hover:text-red-300 bg-white/10 hover:bg-red-500/20 rounded-full transition-all shrink-0 cursor-pointer"
+                            title="Delete File"
+                        >
+                            <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
                 </div>
+
             </div>
 
             {/* Central Media Viewer Viewport with Touch Gestures */}
             <div
                 className="relative flex-1 w-full flex items-center justify-center p-2 sm:p-4 overflow-hidden"
-                onClick={e => e.stopPropagation()}
                 onTouchStart={handleTouchStart}
                 onTouchEnd={handleTouchEnd}
             >
                 {onPrev && (
                     <button
-                        onClick={onPrev}
+                        onClick={(e) => { e.stopPropagation(); onPrev(); }}
                         className="hidden sm:flex absolute left-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/60 hover:bg-black/80 text-white rounded-full transition-colors items-center justify-center cursor-pointer z-20 shadow-lg border border-white/10"
                         title="Previous (ArrowLeft / J)"
                     >
@@ -318,7 +313,7 @@ function ImagePreviewModal({
 
                 {onNext && (
                     <button
-                        onClick={onNext}
+                        onClick={(e) => { e.stopPropagation(); onNext(); }}
                         className="hidden sm:flex absolute right-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/60 hover:bg-black/80 text-white rounded-full transition-colors items-center justify-center cursor-pointer z-20 shadow-lg border border-white/10"
                         title="Next (ArrowRight / L)"
                     >
@@ -327,7 +322,7 @@ function ImagePreviewModal({
                 )}
 
                 {loading && (
-                    <div className="flex flex-col items-center gap-4 text-white">
+                    <div className="flex flex-col items-center gap-4 text-white" onClick={e => e.stopPropagation()}>
                         <div className="w-10 h-10 border-4 border-telegram-primary border-t-transparent rounded-full animate-spin"></div>
                         <p>Loading preview...</p>
                         <p className="text-xs text-white/50">Downloading from Telegram...</p>
@@ -335,7 +330,7 @@ function ImagePreviewModal({
                 )}
 
                 {error && (
-                    <div className="text-red-400 bg-white/10 p-4 rounded-lg border border-red-500/20 max-w-md text-center">
+                    <div className="text-red-400 bg-white/10 p-4 rounded-lg border border-red-500/20 max-w-md text-center" onClick={e => e.stopPropagation()}>
                         <p className="font-bold">Preview Error</p>
                         <p className="text-sm mt-1">{error}</p>
                     </div>
@@ -348,7 +343,12 @@ function ImagePreviewModal({
                                 src={src}
                                 className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                                 alt="Preview"
+                                onClick={e => e.stopPropagation()}
+                                onLoad={() => {
+                                    invoke('cmd_log', { message: `[preview] frontend.image_loaded file=${file.id}` }).catch(() => {});
+                                }}
                                 onError={async () => {
+                                    invoke('cmd_log', { message: `[preview] frontend.image_error file=${file.id}` }).catch(() => {});
                                     if (hasRetriedRef.current) {
                                         setError('Failed to render image preview');
                                         return;
@@ -376,34 +376,10 @@ function ImagePreviewModal({
                                     setError('Failed to render image preview');
                                 }}
                             />
-                        ) : (
-                            <div className="bg-[#1c1c1c] p-8 rounded-xl text-center border border-white/10 shadow-2xl max-w-md w-full">
-                                <File className="w-16 h-16 text-telegram-primary mx-auto mb-4" />
-                                <h3 className="text-xl text-white font-medium mb-2 truncate" title={file.name}>{file.name}</h3>
-                                <p className="text-gray-400 mb-6 text-sm">Preview not supported directly inside the app.</p>
-                                <button
-                                    onClick={handleOpenNative}
-                                    disabled={openingNative}
-                                    className="w-full py-2.5 px-4 bg-telegram-primary hover:bg-telegram-primary/80 text-white rounded-lg transition-colors flex items-center justify-center gap-2 font-medium disabled:opacity-50 cursor-pointer"
-                                >
-                                    {openingNative ? (
-                                        <>
-                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                            <span>Opening...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <ExternalLink className="w-4 h-4" />
-                                            <span>Open in System App</span>
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        )}
+                        ) : null}
                     </div>
                 )}
             </div>
         </div>
     );
 }
-

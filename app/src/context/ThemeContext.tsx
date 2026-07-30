@@ -100,7 +100,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         safeTrySet('theme', theme);
     }, [theme, activeCustomThemeId]);
 
-    // Apply custom theme to DOM
+    // Apply custom theme to DOM — always runs on mount.
+    // If a specific theme is saved, use it; otherwise fall back to the Default Dark preset
+    // so CSS variables are always driven by the engine, not the static @theme fallback.
     useLayoutEffect(() => {
         if (activeCustomThemeId) {
             const found = allThemes.find(t => t.id === activeCustomThemeId);
@@ -113,6 +115,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
                 removeCustomThemeFromDOM();
                 applyBaseTheme(theme);
             }
+        } else {
+            // No custom theme selected — apply the Default Dark/Light builtin so
+            // the theme engine always controls CSS variables
+            const fallback = BUILTIN_THEMES.find(t => t.isDark === (theme === 'dark')) ?? BUILTIN_THEMES[0];
+            applyThemeToDOM(fallback);
         }
     }, [activeCustomThemeId, allThemes, theme]);
 

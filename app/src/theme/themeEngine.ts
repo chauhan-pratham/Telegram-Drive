@@ -38,9 +38,13 @@ export function applyTheme(theme: CustomTheme): void {
     root.classList.remove('dark');
   }
 
-  // Build CSS variable overrides
+  // Build CSS variable overrides.
+  // We use :root.dark / :root.light (specificity 0,1,0) to match — and beat
+  // (by document order) — the static :root.light block in App.css, which would
+  // otherwise override a plain :root { } injection for all light-mode themes.
   const p = theme.palette;
-  const css = `:root {
+  const modeClass = theme.isDark ? 'dark' : 'light';
+  const css = `:root.${modeClass} {
   --color-telegram-bg: ${p.bg};
   --color-telegram-surface: ${p.surface};
   --color-telegram-primary: ${p.primary};
@@ -49,8 +53,8 @@ export function applyTheme(theme: CustomTheme): void {
   --color-telegram-subtext: ${p.subtext};
   --color-telegram-border: ${p.border};
   --color-telegram-hover: ${p.hover};
-  --color-telegram-glass-bg: ${theme.isDark ? p.surface : '#ffffff'};
-  --color-telegram-glass-border: ${theme.isDark ? '#ffffff' : '#000000'};
+  --color-telegram-glass-bg: ${p.surface};
+  --color-telegram-glass-border: ${theme.isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'};
 }`;
 
   // Replace or create the style element

@@ -1,5 +1,8 @@
+#![allow(dead_code)]
+
 use std::sync::Arc;
 use std::io::{Cursor, Read};
+
 use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
@@ -53,41 +56,23 @@ fn generate_unique_temp_prefix(label: &str) -> String {
 /// Download a zip, rar, or 7z file from Telegram and return its directory listing.
 #[tauri::command]
 pub async fn cmd_list_archive_contents(
-    message_id: i32,
-    folder_id: Option<i64>,
-    state: State<'_, TelegramState>,
-    net_config: State<'_, Arc<NetworkConfig>>,
+    _message_id: i32,
+    _folder_id: Option<i64>,
+    _state: State<'_, TelegramState>,
+    _net_config: State<'_, Arc<NetworkConfig>>,
 ) -> Result<Vec<ArchiveEntry>, String> {
-    let (client, media, filename, max_bytes) =
-        prepare_archive_operation(message_id, folder_id, &state, &net_config).await?;
-    let archive_type = detect_archive_type(&filename);
-
-    match archive_type {
-        ArchiveType::Zip => list_zip_contents(&client, &media, max_bytes, &filename).await,
-        ArchiveType::Rar => list_rar_contents(&client, &media, max_bytes, &filename).await,
-        ArchiveType::SevenZ => list_sevenz_contents(&client, &media, max_bytes, &filename).await,
-    }
+    Err("Archive file preview is disabled.".to_string())
 }
 
-/// Extract a single file from an archive and return its temp path for
-/// subsequent upload.
 #[tauri::command]
 pub async fn cmd_extract_archive_entry(
-    message_id: i32,
-    folder_id: Option<i64>,
-    entry_index: usize,
-    state: State<'_, TelegramState>,
-    net_config: State<'_, Arc<NetworkConfig>>,
+    _message_id: i32,
+    _folder_id: Option<i64>,
+    _entry_index: usize,
+    _state: State<'_, TelegramState>,
+    _net_config: State<'_, Arc<NetworkConfig>>,
 ) -> Result<ExtractedFile, String> {
-    let (client, media, filename, max_bytes) =
-        prepare_archive_operation(message_id, folder_id, &state, &net_config).await?;
-    let archive_type = detect_archive_type(&filename);
-
-    match archive_type {
-        ArchiveType::Zip => extract_zip_entry(&client, &media, max_bytes, entry_index).await,
-        ArchiveType::Rar => extract_rar_entry(&client, &media, max_bytes, entry_index).await,
-        ArchiveType::SevenZ => extract_sevenz_entry(&client, &media, max_bytes, entry_index).await,
-    }
+    Err("Archive file preview is disabled.".to_string())
 }
 
 // ── Shared preparation ──────────────────────────────────────────────────

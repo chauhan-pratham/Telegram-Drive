@@ -19,6 +19,11 @@
     "fs:allow-read",
     "fs:allow-write",
     "fs:scope-app-recursive",
+    "fs:scope-appcache-recursive",
+    "fs:scope-cache-recursive",
+    "fs:scope-temp-recursive",
     "opener:default"
   ]
 }
+
+

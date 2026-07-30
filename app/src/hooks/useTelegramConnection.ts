@@ -164,15 +164,16 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         }
     };
 
-    const handleCreateFolder = async (name: string) => {
+    const handleCreateFolder = async (name: string, parentId?: number | null) => {
         if (!store) return;
         try {
-            const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name });
+            const newFolder = await invoke<TelegramFolder>('cmd_create_folder', { name, parentId: parentId ?? null });
             const updated = [...folders, newFolder];
             setFolders(updated);
             await store.set('folders', updated);
             await store.save();
             toast.success(`Folder "${name}" created.`);
+            return newFolder;
         } catch (e) {
             toast.error("Failed to create folder: " + e);
             throw e;
@@ -259,6 +260,33 @@ export function useTelegramConnection(onLogoutParent: () => void) {
             toast.success(`Folder renamed to "${newName}".`);
         } catch (e) {
             toast.error("Failed to rename folder: " + e);
+        } finally {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.delete(folderId);
+                return next;
+            });
+        }
+    };
+
+    const handleFolderMove = async (folderId: number, targetParentId: number | null) => {
+        try {
+            setMutatingFolderIds(prev => {
+                const next = new Set(prev);
+                next.add(folderId);
+                return next;
+            });
+            await invoke('cmd_move_folder', { folderId, targetParentId });
+            const updated = folders.map(f => f.id === folderId ? { ...f, parent_id: targetParentId ?? undefined } : f);
+            setFolders(updated);
+            if (store) {
+                await store.set('folders', updated);
+                await store.save();
+            }
+            queryClient.invalidateQueries({ queryKey: ['folders'] });
+            toast.success("Folder moved successfully.");
+        } catch (e) {
+            toast.error("Failed to move folder: " + e);
         } finally {
             setMutatingFolderIds(prev => {
                 const next = new Set(prev);
@@ -463,6 +491,7 @@ export function useTelegramConnection(onLogoutParent: () => void) {
         handleCreateFolder,
         handleFolderDelete,
         handleFolderRename,
+        handleFolderMove,
         handleFolderToggleVisibility,
         handleExportFolderInvite,
         handleReorderFolders,

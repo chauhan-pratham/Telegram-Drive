@@ -43,13 +43,11 @@ body,
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Auth screen gradient background */
+/* Auth screen gradient — driven by the active theme's palette */
 .auth-gradient {
-  background: radial-gradient(120% 120% at 0% 0%, #3ca5ff 0%, #007aff 100%);
-}
-
-:root.light .auth-gradient {
-  background: linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+  background: linear-gradient(135deg,
+    var(--color-telegram-secondary) 0%,
+    color-mix(in srgb, var(--color-telegram-secondary) 70%, var(--color-telegram-primary)) 100%);
 }
 
 /* Glassmorphism Utilities - Dark */
@@ -76,7 +74,7 @@ body,
 :root.light .auth-glass {
   background: color-mix(in srgb, var(--color-telegram-glass-bg) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-telegram-glass-border) 30%, transparent);
-  color: #1a1a1a;
+  color: var(--color-telegram-text);
 }
 
 /* Force dark text inside auth-glass in light mode */
@@ -107,18 +105,11 @@ body,
 }
 
 /* Auth form icons - Direct overrides for maximum visibility */
+/* Icon colour follows the active theme's text token */
 .auth-form-icon {
-  color: #ffffff !important;
-  /* Default (Dark Mode): Pure White */
-  opacity: 1 !important;
+  color: var(--color-telegram-text) !important;
+  opacity: 0.55 !important;
   z-index: 20;
-}
-
-/* Light Mode Override */
-:root.light .auth-form-icon {
-  color: #000000 !important;
-  /* Light Mode: Pure Black */
-  opacity: 0.8 !important;
 }
 
 .glass-input {

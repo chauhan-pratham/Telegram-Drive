@@ -1,7 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { ArrowUpDown, ArrowUp, ArrowDown, Folder, MoreVertical, Loader2, Users } from 'lucide-react';
+import { ArrowUpDown, ArrowUp, ArrowDown, Folder, MoreVertical, Loader2, Users, Star } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../../context/SettingsContext';
 import { FileCard } from './FileCard';
 import { EmptyState } from './EmptyState';
@@ -9,7 +8,7 @@ import { TelegramFile, TelegramFolder } from '../../../types';
 import { ContextMenu } from './ContextMenu';
 import { FileListItem } from './FileListItem';
 import { useDrive } from '../../../context/DriveContext';
-import { formatBytes } from '../../../utils';
+import { formatBytes, createDragGhost } from '../../../utils';
 
 type SortField = 'name' | 'size' | 'date';
 
@@ -38,6 +37,9 @@ interface FileExplorerProps {
     mutatingFolderIds?: number[];
     onFolderOpen?: (id: number) => void;
     onSelectionChange?: (ids: number[]) => void;
+    onExportInvite?: (id: number, name: string) => void;
+    onFolderRename?: (id: number, name: string) => void;
+    onDownloadFolderById?: (id: number, name: string) => void;
 }
 
 
@@ -76,12 +78,12 @@ function useGridColumns(containerRef: React.RefObject<HTMLDivElement | null>) {
 export function FileExplorer({
     files, loading, error, viewMode, selectedIds, activeFolderId,
     onFileClick, onDelete, onDownload, onPreview, onManualUpload, onFolderUpload: _onFolderUpload, showFolderUpload: _showFolderUpload, onToggleSelection, onDrop, onDragStart, onDragEnd, onShare, onRename, onFileMove,
-    folders = [], mutatingFolderIds = [], onFolderOpen, onSelectionChange
+    folders = [], mutatingFolderIds = [], onFolderOpen, onSelectionChange, onExportInvite, onFolderRename, onDownloadFolderById
 }: FileExplorerProps) {
     const cardScale = 1.0;
-    const { currentTab, sortField, setSortField, sortDirection, setSortDirection } = useDrive();
+    const { currentTab, sortField, setSortField, sortDirection, setSortDirection, isFolderStarred } = useDrive();
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; file: TelegramFile } | null>(null);
-    const { t } = useTranslation();
+    const [dragOverFolderId, setDragOverFolderId] = useState<number | null>(null);
     const { settings } = useSettings();
 
     const parentRef = useRef<HTMLDivElement>(null);
@@ -169,12 +171,6 @@ export function FileExplorer({
         setSelectionBox(null);
     }, []);
 
-    const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setContextMenu(prev => prev?.file.id === file.id ? null : { x: e.clientX, y: e.clientY, file });
-    }, []);
-
     const sortedFiles = useMemo(() => {
         return [...files].sort((a, b) => {
             let comparison = 0;
@@ -192,6 +188,15 @@ export function FileExplorer({
             return sortDirection === 'asc' ? comparison : -comparison;
         });
     }, [files, sortField, sortDirection, settings.language]);
+
+    const handleContextMenu = useCallback((e: React.MouseEvent, file: TelegramFile) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!selectedIds.includes(file.id)) {
+            onFileClick(e, file.id, sortedFiles);
+        }
+        setContextMenu(prev => prev?.file.id === file.id ? null : { x: e.clientX, y: e.clientY, file });
+    }, [selectedIds, onFileClick, sortedFiles]);
 
     const sortedFolders = useMemo(() => {
         if (!folders) return [];
@@ -216,7 +221,22 @@ export function FileExplorer({
         onPreview(file, sortedFiles);
     }, [onPreview, sortedFiles]);
 
-    const showFoldersList = (currentTab === 'my-drive' || currentTab === 'trash') && activeFolderId === null && sortedFolders.length > 0;
+    const currentTabFolders = useMemo(() => {
+        if (currentTab === 'starred') {
+            // displayFolders is already pre-filtered to starred folders by DesktopDashboard
+            return sortedFolders;
+        }
+        if (currentTab !== 'my-drive' && currentTab !== 'trash') return [];
+        return sortedFolders.filter(f => {
+            if (activeFolderId === null) {
+                return !f.parent_id || f.parent_id === 0;
+            } else {
+                return f.parent_id === activeFolderId;
+            }
+        });
+    }, [sortedFolders, currentTab, activeFolderId]);
+
+    const showFoldersList = currentTabFolders.length > 0;
 
     const gridRows = useMemo(() => {
         const rows: TelegramFile[][] = [];
@@ -321,11 +341,41 @@ export function FileExplorer({
                     <h3 className="text-xs font-bold text-telegram-subtext uppercase tracking-wider mb-3">Folders</h3>
                     {viewMode === 'grid' ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                            {sortedFolders.map(folder => {
+                            {currentTabFolders.map(folder => {
                                 const isMutating = mutatingFolderIds.includes(folder.id);
+                                const isDragOver = dragOverFolderId === folder.id;
                                 return (
                                     <div
                                         key={folder.id}
+                                        draggable={folder.id !== -999}
+                                        onDragStart={(e) => {
+                                            if (folder.id === -999) return;
+                                            e.dataTransfer.setData("application/x-telegram-folder-id", folder.id.toString());
+                                            e.dataTransfer.effectAllowed = 'move';
+                                            const ghost = createDragGhost(folder.name, true, 1);
+                                            e.dataTransfer.setDragImage(ghost, 0, 0);
+                                            requestAnimationFrame(() => ghost.remove());
+                                        }}
+                                        onDragOver={(e) => {
+                                            if (!selectedIds.includes(folder.id)) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDragOverFolderId(folder.id);
+                                            }
+                                        }}
+                                        onDragLeave={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (dragOverFolderId === folder.id) setDragOverFolderId(null);
+                                        }}
+                                        onDrop={(e) => {
+                                            if (!selectedIds.includes(folder.id)) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDragOverFolderId(null);
+                                                onDrop?.(e, folder.id);
+                                            }
+                                        }}
                                         onDoubleClick={() => {
                                             if (onFolderOpen) onFolderOpen(folder.id);
                                         }}
@@ -333,6 +383,9 @@ export function FileExplorer({
                                             if (folder.id !== -999) {
                                                 e.preventDefault();
                                                 e.stopPropagation();
+                                                if (!selectedIds.includes(folder.id)) {
+                                                    onFileClick(e, folder.id, []);
+                                                }
                                                 setContextMenu({
                                                     x: e.clientX,
                                                     y: e.clientY,
@@ -343,7 +396,8 @@ export function FileExplorer({
                                                         size: 0,
                                                         sizeStr: '--',
                                                         date: '',
-                                                        mime_type: '',
+                                                        mime_type: 'folder',
+                                                        isFolder: true,
                                                     } as any as TelegramFile
                                                 });
                                             }
@@ -356,6 +410,8 @@ export function FileExplorer({
                                             selectedIds.includes(folder.id)
                                                 ? 'border-telegram-primary bg-telegram-primary/10 ring-1 ring-telegram-primary'
                                                 : ''
+                                        } ${
+                                            isDragOver ? 'ring-2 ring-telegram-primary bg-telegram-primary/20' : ''
                                         }`}
                                         onClick={(e) => {
                                             if (folder.id !== -999) {
@@ -379,13 +435,28 @@ export function FileExplorer({
                                                 </div>
                                             )}
                                             <span className="text-xs font-semibold text-telegram-text truncate">{folder.name}</span>
+                                            {isFolderStarred(folder.id) && (
+                                                <Star className="w-3 h-3 text-amber-400 fill-amber-400 shrink-0" aria-label="Starred" />
+                                            )}
                                         </div>
                                         {!isMutating && folder.id !== -999 && (
                                             <button 
                                                 className="opacity-0 group-hover:opacity-100 p-1 hover:bg-telegram-hover/60 rounded-full transition-opacity text-telegram-subtext hover:text-telegram-text cursor-pointer flex-shrink-0"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    onFileClick(e, folder.id, []);
+                                                    if (!selectedIds.includes(folder.id)) {
+                                                        onFileClick(e, folder.id, []);
+                                                    }
+                                                    const folderAsFile = {
+                                                        id: folder.id,
+                                                        name: folder.name,
+                                                        size: 0,
+                                                        type: 'folder',
+                                                        date: '',
+                                                        mime_type: 'folder',
+                                                        isFolder: true,
+                                                    } as any as TelegramFile;
+                                                    setContextMenu(prev => prev?.file.id === folder.id ? null : { x: e.clientX, y: e.clientY, file: folderAsFile });
                                                 }}
                                             >
                                                 <MoreVertical className="w-4 h-4" />
@@ -397,8 +468,9 @@ export function FileExplorer({
                         </div>
                     ) : (
                         <div className="flex flex-col">
-                            {sortedFolders.map(folder => {
+                            {currentTabFolders.map(folder => {
                                 const isMutating = mutatingFolderIds.includes(folder.id);
+                                const isDragOver = dragOverFolderId === folder.id;
                                 const folderFiles = files.filter(f => f.folder_id === folder.id || (folder.id === -999 && (f.folder_id === null || f.folder_id === -999)));
                                 const folderSize = folderFiles.reduce((acc, f) => acc + (f.size || 0), 0);
                                 const folderItemCount = folderFiles.length;
@@ -420,12 +492,43 @@ export function FileExplorer({
                                 return (
                                     <div
                                         key={folder.id}
+                                        draggable={folder.id !== -999}
+                                        onDragStart={(e) => {
+                                            if (folder.id === -999) return;
+                                            e.dataTransfer.setData("application/x-telegram-folder-id", folder.id.toString());
+                                            e.dataTransfer.effectAllowed = 'move';
+                                            const ghost = createDragGhost(folder.name, true, 1);
+                                            e.dataTransfer.setDragImage(ghost, 0, 0);
+                                            requestAnimationFrame(() => ghost.remove());
+                                        }}
+                                        onDragOver={(e) => {
+                                            if (!selectedIds.includes(folder.id)) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDragOverFolderId(folder.id);
+                                            }
+                                        }}
+                                        onDragLeave={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            if (dragOverFolderId === folder.id) setDragOverFolderId(null);
+                                        }}
+                                        onDrop={(e) => {
+                                            if (!selectedIds.includes(folder.id)) {
+                                                e.preventDefault();
+                                                e.stopPropagation();
+                                                setDragOverFolderId(null);
+                                                onDrop?.(e, folder.id);
+                                            }
+                                        }}
                                         onDoubleClick={() => { if (onFolderOpen) onFolderOpen(folder.id); }}
                                         onContextMenu={(e) => {
                                             if (folder.id !== -999) {
                                                 e.preventDefault();
                                                 e.stopPropagation();
-                                                onFileClick(e, folder.id, []);
+                                                if (!selectedIds.includes(folder.id)) {
+                                                    onFileClick(e, folder.id, []);
+                                                }
                                                 setContextMenu(prev => {
                                                     if (prev?.file.id === folder.id) return null;
                                                     return {
@@ -450,6 +553,8 @@ export function FileExplorer({
                                                 : 'cursor-pointer hover:bg-telegram-hover'
                                         } ${
                                             selectedIds.includes(folder.id) ? 'bg-telegram-primary/10 border-telegram-primary/20' : ''
+                                        } ${
+                                            isDragOver ? 'ring-2 ring-telegram-primary bg-telegram-primary/20' : ''
                                         }`}
                                         onClick={(e) => {
                                             if (folder.id !== -999) {
@@ -475,6 +580,9 @@ export function FileExplorer({
                                         </div>
                                         <div className="min-w-0 truncate text-sm text-telegram-text font-medium flex items-center gap-2">
                                             <span className="truncate">{folder.name}</span>
+                                            {isFolderStarred(folder.id) && (
+                                                <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400 shrink-0" aria-label="Starred" />
+                                            )}
                                         </div>
                                         <div className="hidden sm:block text-xs text-telegram-subtext text-right tabular-nums">{sizeLabel}</div>
                                         <div className="hidden sm:block text-xs text-telegram-subtext text-right tabular-nums">{dateOrStatusLabel}</div>
@@ -572,13 +680,13 @@ export function FileExplorer({
                         <div className="grid grid-cols-[2rem_minmax(0,1fr)_2.5rem] sm:grid-cols-[2rem_minmax(0,2fr)_6.5rem_11rem_2.5rem] gap-4 px-4 py-2 text-xs font-semibold text-telegram-subtext border-b border-telegram-border/40 mb-2 select-none items-center lasso-bg">
                             <div className="text-center">#</div>
                             <button onClick={() => handleSort('name')} className="flex items-center gap-1 hover:text-telegram-text transition-colors min-w-0">
-                                <span className="truncate">{t('common.name')}</span> <SortIcon field="name" />
+                                <span className="truncate">Name</span> <SortIcon field="name" />
                             </button>
                             <button onClick={() => handleSort('size')} className="hidden sm:flex items-center gap-1 justify-end hover:text-telegram-text transition-colors text-right">
-                                {t('common.size')} <SortIcon field="size" />
+                                Size <SortIcon field="size" />
                             </button>
                             <button onClick={() => handleSort('date')} className="hidden sm:flex items-center gap-1 justify-end hover:text-telegram-text transition-colors text-right">
-                                {t('common.date')} <SortIcon field="date" />
+                                Date <SortIcon field="date" />
                             </button>
                             <div className="w-10"></div>
                         </div>
@@ -621,7 +729,13 @@ export function FileExplorer({
                     file={contextMenu.file}
                     onClose={() => setContextMenu(null)}
                     onDownload={() => {
-                        onDownload(contextMenu.file.id, contextMenu.file.name);
+                        if (contextMenu.file.type === 'folder') {
+                            if (onDownloadFolderById) {
+                                onDownloadFolderById(contextMenu.file.id, contextMenu.file.name);
+                            }
+                        } else {
+                            onDownload(contextMenu.file.id, contextMenu.file.name);
+                        }
                         setContextMenu(null);
                     }}
                     onDelete={() => {
@@ -640,14 +754,21 @@ export function FileExplorer({
                         onShare(contextMenu.file);
                         setContextMenu(null);
                     } : undefined}
-                    onRename={onRename ? () => {
-                        onRename(contextMenu.file);
+                    onRename={() => {
+                        if (contextMenu.file.type === 'folder') {
+                            if (onFolderRename) {
+                                onFolderRename(contextMenu.file.id, contextMenu.file.name);
+                            }
+                        } else if (onRename) {
+                            onRename(contextMenu.file);
+                        }
                         setContextMenu(null);
-                    } : undefined}
+                    }}
                     onMove={onFileMove ? () => {
                         onFileMove(contextMenu.file);
                         setContextMenu(null);
                     } : undefined}
+                    onExportInvite={onExportInvite}
                     folders={folders}
                     activeFolderId={activeFolderId}
                 />

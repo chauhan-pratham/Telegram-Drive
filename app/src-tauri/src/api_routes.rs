@@ -1357,6 +1357,7 @@ async fn api_list_folders(
 #[derive(serde::Deserialize)]
 struct CreateFolderRequest {
     name: String,
+    parent_id: Option<i64>,
 }
 
 #[post("/api/v1/folders")]
@@ -1376,7 +1377,7 @@ async fn api_create_folder(
         None => return json_error("NOT_CONNECTED", "Telegram client is not connected", 503),
     };
 
-    match create_folder_inner(&body.name, &client, &tg_state.peer_cache).await {
+    match create_folder_inner(&body.name, body.parent_id, &client, &tg_state.peer_cache).await {
         Ok(folder) => HttpResponse::Ok().json(folder),
         Err(e) => json_error("CREATE_FOLDER_FAILED", &e, 500),
     }

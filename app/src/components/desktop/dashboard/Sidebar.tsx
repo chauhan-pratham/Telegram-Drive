@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
-import { Plus, Link, CheckCircle2 } from 'lucide-react';
-import { MyDriveIcon, SharedIcon, RecentIcon, StarredIcon, TrashIcon, StorageIcon, BandwidthIcon, FolderIcon } from '../../shared/DriveIcons';
+import { Plus } from 'lucide-react';
+import { MyDriveIcon, SharedIcon, RecentIcon, StarredIcon, OfflineIcon, TrashIcon, StorageIcon, BandwidthIcon, FolderIcon } from '../../shared/DriveIcons';
+
 import { BandwidthWidget } from './BandwidthWidget';
 import { TelegramFolder, BandwidthStats } from '../../../types';
 import { useDrive } from '../../../context/DriveContext';
@@ -15,7 +16,7 @@ interface SidebarProps {
     onRename: (id: number, name: string) => void;
     onToggleVisibility: (id: number, name: string, isPublic: boolean) => void;
     onExportInvite: (id: number, name: string) => void;
-    onCreate: (name: string) => Promise<void>;
+    onCreate: (name: string, parentId?: number | null) => Promise<TelegramFolder | undefined | void>;
     isSyncing: boolean;
     isConnected: boolean;
     onSync: () => void;
@@ -24,7 +25,6 @@ interface SidebarProps {
     onReorderFolders: (reordered: TelegramFolder[]) => Promise<void>;
     onManualUpload: () => void;
     onFolderUpload: () => void;
-    onRemoteUploadClick: () => void;
     onNewFolderRequest: () => void;
     totalStorageSize?: number;
 }
@@ -36,7 +36,7 @@ const navItemIdle = 'text-telegram-text/75 hover:bg-telegram-hover hover:text-te
 export function Sidebar({
     folders: _folders, activeFolderId: _activeFolderId, setActiveFolderId, onDrop: _onDrop, onDelete: _onDelete, onRename: _onRename, onToggleVisibility: _onToggleVisibility, onExportInvite: _onExportInvite, onCreate: _onCreate,
     isSyncing: _isSyncing, isConnected: _isConnected, onSync: _onSync, onLogout: _onLogout, bandwidth,
-    onReorderFolders: _onReorderFolders, onManualUpload, onFolderUpload, onRemoteUploadClick, onNewFolderRequest,
+    onReorderFolders: _onReorderFolders, onManualUpload, onFolderUpload, onNewFolderRequest,
     totalStorageSize = 0
 }: SidebarProps) {
     const { currentTab, setCurrentTab } = useDrive();
@@ -100,25 +100,24 @@ export function Sidebar({
                             <FolderIcon className="w-4 h-4" />
                             Folder upload (ZIP)
                         </button>
-                        <button
-                            onClick={() => { setShowNewDropdown(false); onRemoteUploadClick(); }}
-                            className="flex items-center gap-2.5 px-3 py-2 text-sm text-telegram-text hover:bg-telegram-hover rounded-lg text-left transition-colors w-full cursor-pointer"
-                        >
-                            <Link className="w-4 h-4 text-purple-400" />
-                            Remote URL upload
-                        </button>
-
                     </div>
                 )}
             </div>
-
-
 
             {/* Nav Items */}
             <nav className="flex-1 px-2 py-1 space-y-0.5 overflow-y-auto min-h-0 custom-scrollbar select-none">
 
                     <div
                         onClick={() => { setCurrentTab('my-drive'); setActiveFolderId(null); }}
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                        }}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (_onDrop) _onDrop(e, null);
+                        }}
                         className={`${navItemBase} ${currentTab === 'my-drive' ? navItemActive : navItemIdle}`}
                     >
                         <MyDriveIcon className="w-5 h-5 flex-shrink-0" />
@@ -128,8 +127,6 @@ export function Sidebar({
                     <div
                         onClick={() => {
                             setCurrentTab('shared');
-                            // Keep the root selected so File Explorer can show every
-                            // incoming folder instead of silently opening the first one.
                             setActiveFolderId(null);
                         }}
                         className={`${navItemBase} ${currentTab === 'shared' ? navItemActive : navItemIdle}`}
@@ -158,7 +155,7 @@ export function Sidebar({
                         onClick={() => setCurrentTab('offline')}
                         className={`${navItemBase} ${currentTab === 'offline' ? navItemActive : navItemIdle}`}
                     >
-                        <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                        <OfflineIcon className="w-5 h-5 flex-shrink-0" />
                         <span className="flex-1 text-left truncate text-sm">Offline</span>
                     </div>
 

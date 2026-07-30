@@ -29,4 +29,30 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    chunkSizeWarningLimit: 3000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom"],
+          "vendor-tauri": [
+            "@tauri-apps/api",
+            "@tauri-apps/plugin-clipboard-manager",
+            "@tauri-apps/plugin-deep-link",
+            "@tauri-apps/plugin-dialog",
+            "@tauri-apps/plugin-opener",
+            "@tauri-apps/plugin-os",
+            "@tauri-apps/plugin-process",
+            "@tauri-apps/plugin-shell",
+            "@tauri-apps/plugin-store",
+            "@tauri-apps/plugin-updater",
+          ],
+          "vendor-pdf": ["pdfjs-dist"],
+          "vendor-ui": ["framer-motion", "lucide-react", "sonner"],
+        },
+      },
+    },
+  },
+
 }));
+

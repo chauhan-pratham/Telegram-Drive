@@ -154,18 +154,33 @@ pub async fn ensure_client_initialized(
     
     // Spawn the network runner with shutdown support
     let SenderPool { runner, .. } = pool;
-    tauri::async_runtime::spawn(async move {
-        tokio::select! {
-            // Normal runner operation
-            _ = runner.run() => {
-                log::info!("Runner #{} exited normally", runner_num);
-            }
-            // Shutdown requested
-            _ = shutdown_rx => {
-                log::info!("Runner #{} shutdown requested, exiting", runner_num);
-            }
-        }
-    });
+    std::thread::Builder::new()
+        .name(format!("telegram-runner-{}", runner_num))
+        .stack_size(8 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    log::error!("Runner #{} could not create its runtime: {}", runner_num, error);
+                    return;
+                }
+            };
+
+            runtime.block_on(async move {
+                tokio::select! {
+                    _ = runner.run() => {
+                        log::info!("Runner #{} exited normally", runner_num);
+                    }
+                    _ = shutdown_rx => {
+                        log::info!("Runner #{} shutdown requested, exiting", runner_num);
+                    }
+                }
+            });
+        })
+        .map_err(|error| format!("Failed to start Telegram network runner: {}", error))?;
     
     *client_guard = Some(client.clone());
     Ok(client)

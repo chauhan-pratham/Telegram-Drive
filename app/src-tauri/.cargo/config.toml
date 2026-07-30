@@ -1,5 +1,11 @@
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/FORCE:MULTIPLE"]
+rustflags = ["-C", "link-arg=/FORCE:MULTIPLE", "-C", "link-arg=/IGNORE:4006", "-A", "linker_messages"]
 
 [target.i686-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/FORCE:MULTIPLE"]
+rustflags = ["-C", "link-arg=/FORCE:MULTIPLE", "-C", "link-arg=/IGNORE:4006", "-A", "linker_messages"]
+
+
+
+
+
+

@@ -18,6 +18,9 @@ use crate::commands::utils::resolve_peer;
 /// Supported image file extensions for thumbnails.
 /// Shared between Tauri commands and the REST API cache cleanup.
 pub const THUMBNAIL_EXTS: &[&str] = &["jpg", "png", "gif", "webp"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "ico", "heic", "heif",
+];
 
 const PREVIEW_CACHE_MAX_FILES: usize = 30;
 const PREVIEW_CACHE_MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -175,19 +178,20 @@ fn thumb_mime_for_ext(ext: &str) -> &'static str {
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
         _ => "image/jpeg",
     }
 }
 
 async fn read_thumb_as_data_url(path: &std::path::Path, ext: &str) -> Option<String> {
     let bytes = tokio::fs::read(path).await.ok()?;
-    if bytes.is_empty() || bytes.len() > 2 * 1024 * 1024 {
+    if bytes.is_empty() || bytes.len() > 20 * 1024 * 1024 {
         return None;
     }
-    let mime = thumb_mime_for_ext(ext);
-    let b64 = general_purpose::STANDARD.encode(&bytes);
-    Some(format!("data:{};base64,{}", mime, b64))
+    Some(format!("data:{};base64,{}", thumb_mime_for_ext(ext), general_purpose::STANDARD.encode(&bytes)))
 }
+
 
 /// Download Telegram's built-in preview image when available.
 async fn fetch_telegram_thumb_data_url(
@@ -454,7 +458,55 @@ pub async fn cmd_get_preview(
     state: State<'_, TelegramState>,
     bw_state: State<'_, Arc<BandwidthManager>>,
 ) -> Result<String, String> {
+    log::info!(
+        target: "preview",
+        "preview.command_dispatched message_id={} folder_id={:?} thumbnail={:?}",
+        message_id,
+        folder_id,
+        thumbnail
+    );
+
+    let result = Box::pin(get_preview_inner(
+        message_id,
+        folder_id,
+        thumbnail,
+        app_handle,
+        state,
+        bw_state,
+    ))
+    .await;
+
+    if let Err(error) = &result {
+        log::error!(
+            target: "preview",
+            "preview.command_failed message_id={} folder_id={:?} thumbnail={:?} error={}",
+            message_id,
+            folder_id,
+            thumbnail,
+            error
+        );
+    }
+
+    result
+}
+
+async fn get_preview_inner(
+    message_id: i32,
+    folder_id: Option<i64>,
+    thumbnail: Option<bool>,
+    app_handle: tauri::AppHandle,
+    state: State<'_, TelegramState>,
+    bw_state: State<'_, Arc<BandwidthManager>>,
+) -> Result<String, String> {
     use tauri::Manager;
+
+    log::info!(
+        target: "preview",
+        "preview.start message_id={} folder_id={:?} thumbnail={:?}",
+        message_id,
+        folder_id,
+        thumbnail
+    );
 
     // Fast path: Check if file is available in local offline storage first
     if let Ok(data_dir) = app_handle.path().app_data_dir() {
@@ -468,18 +520,16 @@ pub async fn cmd_get_preview(
                         let path = entry.path();
                         if path.exists() && std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
                             let fname_lower = fname.to_lowercase();
-                            let is_img = fname_lower.ends_with(".jpg") || fname_lower.ends_with(".jpeg") || fname_lower.ends_with(".png") || fname_lower.ends_with(".webp") || fname_lower.ends_with(".gif") || fname_lower.ends_with(".bmp");
+                            let is_img = IMAGE_EXTS.iter().any(|ext| fname_lower.ends_with(&format!(".{}", ext)));
                             if is_img {
-                                if let Ok(meta) = std::fs::metadata(&path) {
-                                    if meta.len() <= 30 * 1024 * 1024 {
-                                        if let Ok(bytes) = std::fs::read(&path) {
-                                            let b64 = general_purpose::STANDARD.encode(&bytes);
-                                            let mime = if fname_lower.ends_with(".png") { "image/png" } else if fname_lower.ends_with(".webp") { "image/webp" } else if fname_lower.ends_with(".gif") { "image/gif" } else { "image/jpeg" };
-                                            return Ok(format!("data:{};base64,{}", mime, b64));
-                                        }
-                                    }
+                                log::info!(target: "preview", "preview.offline_image message_id={} path={}", message_id, path.display());
+                                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jpg");
+                                if let Some(data_url) = read_thumb_as_data_url(&path, ext).await {
+                                    return Ok(data_url);
                                 }
+                                return Ok(path.to_string_lossy().to_string());
                             }
+
                             return Ok(path.to_string_lossy().to_string());
                         }
                     }
@@ -600,29 +650,21 @@ pub async fn cmd_get_preview(
         .unwrap_or_else(|| "home".to_string());
 
     // Fast path: Serve cached preview from disk if available (works offline without network)
-    let supported_exts = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "pdf", "mp4"];
+    let supported_exts = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "avif", "ico", "heic", "heif", "pdf", "mp4"];
     for ext in supported_exts {
         let save_path = cache_dir.join(format!("{}_{}.{}", folder_key, message_id, ext));
         if let Ok(meta) = tokio::fs::metadata(&save_path).await {
             if meta.len() > 0 {
                 let save_path_str = save_path.to_string_lossy().to_string();
                 let lower_ext = ext.to_lowercase();
-                if ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].contains(&lower_ext.as_str()) {
-                    if meta.len() <= 30 * 1024 * 1024 {
-                        if let Ok(bytes) = tokio::fs::read(&save_path).await {
-                            let mime = match lower_ext.as_str() {
-                                "png" => "image/png",
-                                "gif" => "image/gif",
-                                "webp" => "image/webp",
-                                "bmp" => "image/bmp",
-                                "svg" => "image/svg+xml",
-                                _ => "image/jpeg",
-                            };
-                            let b64 = general_purpose::STANDARD.encode(&bytes);
-                            return Ok(format!("data:{};base64,{}", mime, b64));
-                        }
+                if IMAGE_EXTS.contains(&lower_ext.as_str()) {
+                    log::info!(target: "preview", "preview.cache_image message_id={} path={} bytes={}", message_id, save_path.display(), meta.len());
+                    if let Some(data_url) = read_thumb_as_data_url(&save_path, &lower_ext).await {
+                        return Ok(data_url);
                     }
+                    return Ok(save_path_str);
                 }
+
                 return Ok(save_path_str);
             }
         }
@@ -651,6 +693,14 @@ pub async fn cmd_get_preview(
                             e = match mime {
                                 "image/jpeg" => "jpg".to_string(),
                                 "image/png" => "png".to_string(),
+                                "image/gif" => "gif".to_string(),
+                                "image/webp" => "webp".to_string(),
+                                "image/bmp" => "bmp".to_string(),
+                                "image/svg+xml" => "svg".to_string(),
+                                "image/avif" => "avif".to_string(),
+                                "image/x-icon" | "image/vnd.microsoft.icon" => "ico".to_string(),
+                                "image/heic" => "heic".to_string(),
+                                "image/heif" => "heif".to_string(),
                                 "application/pdf" => "pdf".to_string(),
                                 "video/mp4" => "mp4".to_string(),
                                 _ => "bin".to_string(),
@@ -669,7 +719,36 @@ pub async fn cmd_get_preview(
                 .unwrap_or_else(|| "home".to_string());
             let save_path = cache_dir.join(format!("{}_{}.{}", folder_key, message_id, ext));
             let save_path_str = save_path.to_string_lossy().to_string();
-            
+
+            let is_image = matches!(&media, Media::Photo(_)) || match &media {
+                Media::Document(d) => {
+                    let mime = d.mime_type().unwrap_or("").to_lowercase();
+                    let name = d.name().unwrap_or("").to_lowercase();
+                    mime.starts_with("image/") || IMAGE_EXTS.iter().any(|ext| name.ends_with(&format!(".{}", ext)))
+                }
+                _ => false,
+            };
+
+            if is_image {
+                log::info!(target: "preview", "preview.fetch_thumbnail message_id={} ext={}", message_id, ext);
+                if let Ok(Some(data_url)) = fetch_telegram_thumb_data_url(
+                    &client,
+                    peer,
+                    message_id,
+                    &media,
+                    &cache_dir,
+                    &folder_key,
+                    "jpg",
+                    false,
+                    &state,
+                ).await {
+                    log::info!(target: "preview", "preview.return_thumbnail message_id={} data_url_bytes={}", message_id, data_url.len());
+                    return Ok(data_url);
+                }
+            } else {
+                return Err("Preview not supported for non-image file types".to_string());
+            }
+
             // Prune the cache here, explicitly preserving the active file being previewed
             prune_preview_cache(cache_dir.clone(), Some(save_path.clone())).await;
 
@@ -688,6 +767,7 @@ pub async fn cmd_get_preview(
                     _ => 0,
                 };
                 log::info!("Downloading preview... Size: {}", size);
+                log::info!(target: "preview", "preview.download_full_start message_id={} path={} expected_bytes={}", message_id, save_path.display(), size);
                 if let Err(e) = bw_state.try_reserve_down(size) {
                     log::warn!("Bandwidth limit hit for preview: {}", e);
                     false
@@ -708,6 +788,7 @@ pub async fn cmd_get_preview(
                         match download_to_file(&client, &media, &part_path).await {
                             Ok(written) => {
                                 log::info!("Preview download complete: {} bytes.", written);
+                                log::info!(target: "preview", "preview.download_full_complete message_id={} bytes={}", message_id, written);
                                 match tokio::fs::rename(&part_path, &save_path).await {
                                     Ok(_) => {
                                         download_ok = true;
@@ -774,23 +855,9 @@ pub async fn cmd_get_preview(
             };
             if file_ready {
                 let lower_ext = ext.to_lowercase();
-                if ["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg"].contains(&lower_ext.as_str()) {
-                    if let Ok(meta) = tokio::fs::metadata(&save_path).await {
-                        if meta.len() <= 30 * 1024 * 1024 {
-                            if let Ok(bytes) = tokio::fs::read(&save_path).await {
-                                let mime = match lower_ext.as_str() {
-                                    "png" => "image/png",
-                                    "gif" => "image/gif",
-                                    "webp" => "image/webp",
-                                    "bmp" => "image/bmp",
-                                    "svg" => "image/svg+xml",
-                                    _ => "image/jpeg",
-                                };
-                                let b64 = general_purpose::STANDARD.encode(&bytes);
-                                return Ok(format!("data:{};base64,{}", mime, b64));
-                            }
-                        }
-                    }
+                if IMAGE_EXTS.contains(&lower_ext.as_str()) {
+                    log::info!(target: "preview", "preview.return_image_path message_id={} path={}", message_id, save_path.display());
+                    return Ok(save_path_str);
                 }
                 log::info!("Returning path preview: {}", save_path_str);
                 return Ok(save_path_str);
@@ -907,30 +974,20 @@ pub async fn cmd_get_thumbnail(
             let mut is_image = false;
             let mut is_video = false;
             let mut is_pdf = false;
-            let mut ext = "jpg".to_string();
 
             match &media {
                 Media::Photo(_) => {
                     is_image = true;
-                    ext = "jpg".to_string();
                 }
                 Media::Document(d) => {
                     let mime = d.mime_type().unwrap_or("");
                     let name = d.name().unwrap_or("").to_lowercase();
                     if mime.starts_with("image/") {
                         is_image = true;
-                        ext = match mime {
-                            "image/png" => "png",
-                            "image/gif" => "gif",
-                            "image/webp" => "webp",
-                            _ => "jpg",
-                        }.to_string();
                     } else if name.ends_with(".mp4") || name.ends_with(".mkv") || name.ends_with(".webm") || mime.starts_with("video/") {
                         is_video = true;
-                        ext = "jpg".to_string();
                     } else if name.ends_with(".pdf") || mime == "application/pdf" {
                         is_pdf = true;
-                        ext = "jpg".to_string();
                     }
                 }
                 _ => {}
@@ -944,7 +1001,7 @@ pub async fn cmd_get_thumbnail(
                     &media,
                     &cache_dir,
                     &folder_key,
-                    &ext,
+                    "jpg",
                     true,
                     &state,
                 ).await? {

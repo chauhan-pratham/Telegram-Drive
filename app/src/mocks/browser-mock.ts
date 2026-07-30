@@ -197,6 +197,7 @@ if (typeof window !== "undefined" && !("__TAURI_INTERNALS__" in window)) {
 
         case "cmd_delete_folder":
         case "cmd_rename_folder":
+        case "cmd_move_folder":
         case "cmd_create_group":
         case "cmd_delete_group":
         case "cmd_update_group":

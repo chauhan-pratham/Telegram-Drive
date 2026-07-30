@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Download, Trash2 } from 'lucide-react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 // Use the legacy build — the modern build uses Map.getOrInsertComputed()
 // which isn't available in Tauri's WebKit WebView
@@ -24,9 +24,12 @@ interface PdfViewerProps {
     currentIndex?: number;
     totalItems?: number;
     activeFolderId: number | null;
+    onDownload?: (file: TelegramFile) => void;
+    onShare?: (file: TelegramFile) => void;
+    onDelete?: (file: TelegramFile) => void;
 }
 
-export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId }: PdfViewerProps) {
+export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalItems, activeFolderId, onDownload, onShare: _onShare, onDelete }: PdfViewerProps) {
     const [streamInfo, setStreamInfo] = useState<StreamInfo | null>(null);
     const [pdf, setPdf] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
     const [numPages, setNumPages] = useState<number>(0);
@@ -300,42 +303,68 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
     };
 
     return (
-        <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col p-2 sm:p-4 backdrop-blur-md animate-in fade-in duration-200" onClick={onClose}>
-            {/* Header / Controls */}
-            <div className="absolute top-0 left-0 right-0 flex justify-between items-center px-3 sm:px-6 z-50 pointer-events-none pt-[calc(0.75rem+env(safe-area-inset-top))]">
-                <div className="text-white bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full pointer-events-auto border border-white/10 flex items-center gap-2 max-w-[65%] sm:max-w-md shadow-md">
+        <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col backdrop-blur-md animate-in fade-in duration-200" onClick={onClose}>
+            {/* Top Header Bar — consistent with PreviewModal & MediaPlayer */}
+            <div
+                className="w-full flex items-center justify-between px-4 py-3 bg-black/90 text-white z-50 border-b border-white/10 shrink-0"
+                onClick={e => e.stopPropagation()}
+            >
+                {/* Left: Back button + Filename */}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                     <button
                         onClick={onClose}
-                        className="p-1 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer shrink-0"
-                        title="Back"
+                        className="p-1.5 rounded-full hover:bg-white/10 text-white cursor-pointer transition active:scale-95 shrink-0"
+                        title="Back (Esc)"
                     >
-                        <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
                     </button>
-                    <h3 className="text-xs sm:text-sm font-medium truncate">{file.name}</h3>
+                    <h2 className="text-sm sm:text-base font-semibold text-white truncate tracking-tight" title={file.name}>
+                        {file.name}
+                    </h2>
+                </div>
+
+                {/* Right: Zoom controls + Action buttons */}
+                <div className="flex items-center gap-2 shrink-0">
+                    {/* Zoom pill */}
+                    <div className="hidden sm:flex items-center gap-1 bg-white/10 p-1 rounded-full border border-white/10 text-xs">
+                        <button onClick={handleZoomOut} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom Out (-)">
+                            <ZoomOut className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={handleFitWidth} className="text-[11px] text-white/90 hover:text-white font-medium min-w-[2.75rem] text-center cursor-pointer transition-colors px-1 py-0.5 rounded hover:bg-white/10" title="Fit to width / Reset zoom">
+                            {Math.round(scale * 100)}%
+                        </button>
+                        <button onClick={handleZoomIn} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom In (+)">
+                            <ZoomIn className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+
+                    {/* Action buttons */}
+                    {onDownload && (
+                        <button
+                            onClick={() => onDownload(file)}
+                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all shrink-0 cursor-pointer"
+                            title="Download"
+                        >
+                            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+                        </button>
+                    )}
                     <button
                         onClick={handleOpenExternally}
                         disabled={openingExternal}
-                        className="p-1 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 shrink-0 cursor-pointer"
+                        className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 shrink-0 cursor-pointer"
                         title="Open in System PDF Viewer"
                     >
-                        <ExternalLink className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
                     </button>
-                </div>
-
-                <div className="flex items-center gap-1.5 pointer-events-auto">
-                    <div className="flex items-center gap-1 bg-black/60 backdrop-blur-md p-1 rounded-full border border-white/10 text-xs shadow-md">
-                        <button onClick={handleZoomOut} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom Out (-)">
-                            <ZoomOut className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    {onDelete && (
+                        <button
+                            onClick={() => { onDelete(file); onClose(); }}
+                            className="p-2 text-red-400 hover:text-red-300 bg-white/10 hover:bg-red-500/20 rounded-full transition-all shrink-0 cursor-pointer"
+                            title="Delete File"
+                        >
+                            <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
                         </button>
-                        <span className="text-[11px] sm:text-xs text-white/90 font-medium min-w-[2.5rem] sm:min-w-[3rem] text-center">{Math.round(scale * 100)}%</span>
-                        <button onClick={handleZoomIn} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom In (+)">
-                            <ZoomIn className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        </button>
-                        <div className="w-px h-3.5 bg-white/20 mx-0.5"></div>
-                        <button onClick={handleFitWidth} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Fit Width">
-                            <Maximize className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                        </button>
-                    </div>
+                    )}
                 </div>
             </div>
 
@@ -363,8 +392,8 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
             {/* Scrollable Document Container */}
             <div
                 ref={containerRef}
-                className="flex-1 w-full overflow-auto custom-scrollbar flex flex-col items-center pt-[calc(4rem+env(safe-area-inset-top))] sm:pt-[calc(5rem+env(safe-area-inset-top))] pb-20 px-1 sm:px-4 relative"
-                onClick={(e) => e.stopPropagation()}
+                className="flex-1 w-full overflow-auto custom-scrollbar flex flex-col items-center pt-4 pb-20 px-1 sm:px-4 relative"
+                onClick={onClose}
             >
                 {loading && (
                     <div className="flex flex-col items-center justify-center flex-1 text-white absolute inset-0">
@@ -523,6 +552,7 @@ function PdfPage({ pageNumber, pdf, scale }: { pageNumber: number; pdf: pdfjsLib
         <div
             ref={containerRef}
             className="flex flex-col items-center justify-center relative bg-[#1e1e1e] rounded-xl overflow-hidden shadow-2xl border border-white/10 max-w-full"
+            onClick={e => e.stopPropagation()}
             style={{
                 width: currentWidth ? `${currentWidth}px` : '100%',
                 height: currentHeight ? `${currentHeight}px` : '600px',

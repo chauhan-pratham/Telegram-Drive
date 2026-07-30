@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { Pencil } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 interface RenameFolderSheetProps {
     folderId: number;
@@ -13,7 +12,6 @@ export function RenameFolderSheet({ folderId, currentName, onRename, onClose }: 
     const [name, setName] = useState(currentName);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
-    const { t } = useTranslation();
 
     useEffect(() => {
         // Small delay to let the slide-in animation start before focusing
@@ -70,9 +68,9 @@ export function RenameFolderSheet({ folderId, currentName, onRename, onClose }: 
                         <Pencil className="w-5 h-5" />
                     </div>
                     <div>
-                        <h3 className="text-base font-bold text-telegram-text">{t('files.rename_folder')}</h3>
+                        <h3 className="text-base font-bold text-telegram-text">Rename Folder</h3>
                         <p className="text-xs text-telegram-subtext mt-0.5">
-                            {t('files.enter_new_name', { name: currentName })}
+                            Enter a new name for "{currentName}"
                         </p>
                     </div>
                 </div>
@@ -86,7 +84,7 @@ export function RenameFolderSheet({ folderId, currentName, onRename, onClose }: 
                     onKeyDown={handleKeyDown}
                     maxLength={100}
                     className="w-full bg-telegram-bg border border-telegram-border rounded-xl px-3.5 py-3 text-sm text-telegram-text placeholder:text-telegram-subtext/50 focus:outline-none focus:ring-2 focus:ring-telegram-primary/50 focus:border-telegram-primary/50 transition-all mb-4"
-                    placeholder={t('files.folder_name')}
+                    placeholder="Folder name"
                     disabled={isSubmitting}
                 />
 
@@ -97,7 +95,7 @@ export function RenameFolderSheet({ folderId, currentName, onRename, onClose }: 
                         className="flex-1 py-3 text-sm font-semibold text-telegram-subtext hover:text-telegram-text bg-telegram-hover/30 hover:bg-telegram-hover/50 rounded-xl transition-colors active:scale-[0.98]"
                         disabled={isSubmitting}
                     >
-                        {t('common.cancel')}
+                        Cancel
                     </button>
                     <button
                         onClick={handleSubmit}
@@ -107,10 +105,10 @@ export function RenameFolderSheet({ folderId, currentName, onRename, onClose }: 
                         {isSubmitting ? (
                             <span className="flex items-center justify-center gap-2">
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                {t('files.renaming')}
+                                Renaming...
                             </span>
                         ) : (
-                            t('files.rename')
+                            'Rename'
                         )}
                     </button>
                 </div>

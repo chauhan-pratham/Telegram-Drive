@@ -1,8 +1,7 @@
-import { LayoutGrid, LayoutList, Share2, X, Info, ChevronRight, Download, Trash2, FolderInput, ChevronDown, RefreshCw, ArrowUpDown, RotateCcw, Pencil, Star, CheckCircle2 } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { LayoutGrid, LayoutList, Share2, X, Info, ChevronRight, Download, Trash2, FolderInput, ChevronDown, RefreshCw, ArrowUpDown, RotateCcw, Pencil, Star, CheckCircle2, MoreHorizontal } from 'lucide-react';
 import { useSettings } from '../../../context/SettingsContext';
 import { invoke } from '@tauri-apps/api/core';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useDrive, FileTypeFilter } from '../../../context/DriveContext';
 import { toast } from 'sonner';
 import { TelegramFile } from '../../../types';
@@ -13,30 +12,45 @@ interface TopBarProps {
     onShowMoveModal: () => void;
     onBulkDownload: () => void;
     onBulkDelete: () => void;
-    onBulkShare: () => void;
     onDownloadFolder: () => void;
     onClearSelection: () => void;
     viewMode: 'grid' | 'list';
     setViewMode: (mode: 'grid' | 'list') => void;
-    onRemoteUploadClick: () => void;
     onGoToRoot?: () => void;
     onRefresh?: () => void;
     isRefreshing?: boolean;
     onBulkRestore?: () => void;
-    folders: { id: number; name: string }[];
+    folders: { id: number; name: string; parent_id?: number | null }[];
     activeFolderId: number | null;
     onExportInvite?: (id: number, name: string) => void;
     onFolderRename?: (id: number, name: string) => void;
     onDownloadFolderById?: (id: number, name: string) => void;
     files?: TelegramFile[];
+    onNavigateToFolder?: (folderId: number | null) => void;
 }
 
 export function TopBar({
-    currentFolderName, selectedIds, onShowMoveModal, onBulkDownload, onBulkDelete, onBulkShare,
-    onDownloadFolder: _onDownloadFolder, onClearSelection, viewMode, setViewMode, onRemoteUploadClick: _onRemoteUploadClick, onGoToRoot,
-    onRefresh, isRefreshing, onBulkRestore, folders, activeFolderId: _activeFolderId, onExportInvite, onFolderRename, onDownloadFolderById, files
+    currentFolderName,
+    selectedIds,
+    onShowMoveModal,
+    onBulkDownload,
+    onBulkDelete,
+    onDownloadFolder: _onDownloadFolder,
+    onClearSelection,
+    viewMode,
+    setViewMode,
+    onGoToRoot,
+    onRefresh,
+    isRefreshing,
+    onBulkRestore,
+    folders,
+    activeFolderId: _activeFolderId,
+    onExportInvite,
+    onFolderRename,
+    onDownloadFolderById,
+    files,
+    onNavigateToFolder,
 }: TopBarProps) {
-    const { t } = useTranslation();
     const { settings } = useSettings();
     const {
         isInfoPanelOpen,
@@ -60,6 +74,24 @@ export function TopBar({
         starredFiles,
         trashedFiles,
     } = useDrive();
+
+    const breadcrumbs = useMemo(() => {
+        if (currentTab !== 'my-drive' || !_activeFolderId) return [];
+        const chain: { id: number; name: string }[] = [];
+        let currId: number | null | undefined = _activeFolderId;
+        const visited = new Set<number>();
+        while (currId && !visited.has(currId)) {
+            visited.add(currId);
+            const found = (folders as any[]).find(f => f.id === currId);
+            if (found) {
+                chain.unshift({ id: found.id, name: found.name });
+                currId = found.parent_id ?? null;
+            } else {
+                break;
+            }
+        }
+        return chain;
+    }, [currentTab, _activeFolderId, folders]);
 
     const [proxyStatus, setProxyStatus] = useState<{ reachable: boolean; latency_ms: number } | null>(null);
     const [localRefreshing, setLocalRefreshing] = useState(false);
@@ -116,6 +148,18 @@ export function TopBar({
     const filterMenuRef = useRef<HTMLDivElement>(null);
     const [showSortMenu, setShowSortMenu] = useState(false);
     const sortMenuRef = useRef<HTMLDivElement>(null);
+    const [showSelectionMoreMenu, setShowSelectionMoreMenu] = useState(false);
+    const selectionMoreMenuRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!showSelectionMoreMenu) return;
+        const handler = (e: MouseEvent) => {
+            if (selectionMoreMenuRef.current && selectionMoreMenuRef.current.contains(e.target as Node)) return;
+            setShowSelectionMoreMenu(false);
+        };
+        window.addEventListener('mousedown', handler);
+        return () => window.removeEventListener('mousedown', handler);
+    }, [showSelectionMoreMenu]);
 
     useEffect(() => {
         if (!showFilters) return;
@@ -173,16 +217,38 @@ export function TopBar({
                                 <span
                                     onClick={() => { if (onGoToRoot) onGoToRoot(); setCurrentTab('my-drive'); }}
                                     className={`transition-colors ${
-                                        !currentFolderName
-                                            ? 'font-semibold cursor-default'
-                                            : 'hover:text-telegram-primary cursor-pointer'
+                                        breadcrumbs.length === 0
+                                            ? 'font-semibold cursor-default text-telegram-text'
+                                            : 'hover:text-telegram-primary cursor-pointer text-telegram-subtext'
                                     }`}
                                 >
                                     My Drive
                                 </span>
-                                {currentFolderName && (
+                                {breadcrumbs.map((item, idx) => {
+                                    const isLast = idx === breadcrumbs.length - 1;
+                                    return (
+                                        <div key={item.id} className="flex items-center">
+                                            <ChevronRight className="w-4 h-4 mx-1.5 text-telegram-subtext shrink-0" />
+                                            <span
+                                                onClick={() => {
+                                                    if (!isLast && onNavigateToFolder) {
+                                                        onNavigateToFolder(item.id);
+                                                    }
+                                                }}
+                                                className={`transition-colors truncate max-w-[160px] ${
+                                                    isLast
+                                                        ? 'font-semibold text-telegram-text cursor-default'
+                                                        : 'hover:text-telegram-primary cursor-pointer text-telegram-subtext'
+                                                }`}
+                                            >
+                                                {item.name}
+                                            </span>
+                                        </div>
+                                    );
+                                })}
+                                {breadcrumbs.length === 0 && currentFolderName && (
                                     <>
-                                        <ChevronRight className="w-4 h-4 mx-1.5 text-telegram-subtext" />
+                                        <ChevronRight className="w-4 h-4 mx-1.5 text-telegram-subtext shrink-0" />
                                         <span className="text-telegram-text font-semibold">{currentFolderName}</span>
                                     </>
                                 )}
@@ -225,7 +291,7 @@ export function TopBar({
                     <button
                         onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
                         className="p-2 hover:bg-telegram-hover rounded-full text-telegram-subtext hover:text-telegram-text transition-colors relative group"
-                        title={t('files.toggle_layout')}
+                        title="Toggle layout"
                     >
                         {viewMode === 'grid' ? <LayoutList className="w-4.5 h-4.5" /> : <LayoutGrid className="w-4.5 h-4.5" />}
                     </button>
@@ -249,62 +315,16 @@ export function TopBar({
             <div className="flex items-center flex-wrap gap-2 px-6 pb-3 pt-1.5 select-none min-h-[38px]">
                 {selectedIds.length > 0 ? (
                     <div className="flex items-center gap-2 animate-in fade-in duration-200 w-full">
-                        <span className="text-xs text-telegram-text font-semibold mr-2">{t('files.items_selected', { count: selectedIds.length })}</span>
+                        <span className="text-xs text-telegram-text font-semibold mr-2">{selectedIds.length} selected</span>
                         
                         <button
                             onClick={onClearSelection}
                             className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer"
-                            title={t('files.clear_selection')}
+                            title="Clear selection"
                         >
                             <X className="w-3.5 h-3.5 text-telegram-subtext" />
                             <span>Clear</span>
                         </button>
-
-                        {(() => {
-                            const allKnownFilesMap = new Map<number, TelegramFile>();
-                            (files || []).forEach(f => allKnownFilesMap.set(f.id, f));
-                            (offlineFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
-                            (starredFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
-                            (trashedFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
-
-                            const selectedFileItems = selectedIds.map(id => allKnownFilesMap.get(id)).filter((f): f is TelegramFile => !!f);
-                            const selectedFolderItems = folders?.filter(f => selectedIds.includes(f.id)) || [];
-
-                            const hasSelectedFiles = selectedFileItems.length > 0;
-                            const hasSelectedFolders = selectedFolderItems.length > 0;
-
-                            const allFilesStarred = hasSelectedFiles && selectedFileItems.every(f => isStarred(f.id));
-                            const allFoldersStarred = hasSelectedFolders && selectedFolderItems.every(f => isFolderStarred(f.id));
-
-                            const isAllSelectedStarred = (hasSelectedFiles || hasSelectedFolders) &&
-                                (!hasSelectedFiles || allFilesStarred) &&
-                                (!hasSelectedFolders || allFoldersStarred);
-
-                            const handleToggleStarSelection = () => {
-                                if (isAllSelectedStarred) {
-                                    selectedIds.forEach(id => unstarFile(id));
-                                    selectedFolderItems.forEach(f => unstarFolder(f.id));
-                                    toast.success(`Removed ${selectedIds.length} item(s) from Starred`);
-                                } else {
-                                    selectedFileItems.forEach(f => starFile(f));
-                                    selectedFolderItems.forEach(f => {
-                                        starFolder({ id: f.id, name: f.name } as any);
-                                    });
-                                    toast.success(`Added ${selectedIds.length} item(s) to Starred`);
-                                }
-                            };
-
-                            return (
-                                <button
-                                    onClick={handleToggleStarSelection}
-                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
-                                    title={isAllSelectedStarred ? "Remove from Starred" : "Add to Starred"}
-                                >
-                                    <Star className={`w-3.5 h-3.5 text-amber-400 ${isAllSelectedStarred ? 'fill-amber-400' : ''}`} />
-                                    <span>{isAllSelectedStarred ? 'Unstar' : 'Star'}</span>
-                                </button>
-                            );
-                        })()}
 
                         {currentTab === 'trash' ? (
                             <>
@@ -330,109 +350,161 @@ export function TopBar({
                             </>
                         ) : (
                             <>
-                                {/* Folder specific actions (Get Link / Rename) when a single folder is selected */}
-                                {selectedIds.length === 1 && folders.some(f => f.id === selectedIds[0]) && (
-                                    <>
-                                        {onExportInvite && (() => {
-                                            const folder = folders.find(f => f.id === selectedIds[0]);
-                                            return folder && (
-                                                <button
-                                                    onClick={() => onExportInvite(folder.id, folder.name)}
-                                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
-                                                    title="Get invite link"
-                                                >
-                                                    <Share2 className="w-3.5 h-3.5 text-telegram-primary" />
-                                                    <span>Get Link</span>
-                                                </button>
-                                            );
-                                        })()}
+                                {/* Primary Action 1: Download */}
+                                <button
+                                    onClick={() => {
+                                        const selectedFolder = selectedIds.length === 1 ? folders.find(f => f.id === selectedIds[0]) : null;
+                                        if (selectedFolder && onDownloadFolderById) {
+                                            onDownloadFolderById(selectedFolder.id, selectedFolder.name);
+                                        } else {
+                                            onBulkDownload();
+                                        }
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
+                                    title="Download selected"
+                                >
+                                    <Download className="w-3.5 h-3.5 text-green-400" />
+                                    <span>Download</span>
+                                </button>
 
-                                        {onFolderRename && (() => {
-                                            const folder = folders.find(f => f.id === selectedIds[0]);
-                                            return folder && (
-                                                <button
-                                                    onClick={() => onFolderRename(folder.id, folder.name)}
-                                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
-                                                    title="Rename folder"
-                                                >
-                                                    <Pencil className="w-3.5 h-3.5 text-blue-400" />
-                                                    <span>Rename</span>
-                                                </button>
-                                            );
-                                        })()}
+                                {/* Primary Action 2: Move */}
+                                <button
+                                    onClick={onShowMoveModal}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
+                                    title="Move to folder"
+                                >
+                                    <FolderInput className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>Move</span>
+                                </button>
 
-                                        {onDownloadFolderById && (() => {
-                                            const folder = folders.find(f => f.id === selectedIds[0]);
-                                            return folder && (
-                                                <button
-                                                    onClick={() => onDownloadFolderById(folder.id, folder.name)}
-                                                    className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
-                                                    title="Download folder"
-                                                >
-                                                    <Download className="w-3.5 h-3.5 text-green-400" />
-                                                    <span>Download</span>
-                                                </button>
-                                            );
-                                        })()}
-                                    </>
-                                )}
-
-                                {currentTab === 'offline' && (
-                                    <button
-                                        onClick={() => {
-                                            selectedIds.forEach(id => removeOfflineAccess(id));
-                                            toast.success(`Removed offline access for ${selectedIds.length} item(s)`);
-                                            onClearSelection();
-                                        }}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer font-medium"
-                                        title="Remove offline access for selected items"
-                                    >
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" />
-                                        <span>Remove Offline</span>
-                                    </button>
-                                )}
-
-                                {currentTab !== 'offline' && !selectedIds.some(id => folders.some(f => f.id === id)) && (
-                                    <button
-                                        onClick={onShowMoveModal}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer"
-                                        title={t('files.move_to')}
-                                    >
-                                        <FolderInput className="w-3.5 h-3.5 text-amber-400" />
-                                        <span>Move</span>
-                                    </button>
-                                )}
-
-                                {!selectedIds.some(id => folders.some(f => f.id === id)) && (
-                                    <button
-                                        onClick={onBulkDownload}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer"
-                                        title={t('files.download_selected')}
-                                    >
-                                        <Download className="w-3.5 h-3.5 text-green-400" />
-                                        <span>Download</span>
-                                    </button>
-                                )}
-
-                                {currentTab !== 'offline' && !selectedIds.some(id => folders.some(f => f.id === id)) && (
-                                    <button
-                                        onClick={onBulkShare}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text text-xs rounded-full border border-telegram-border/30 transition-colors cursor-pointer"
-                                        title={t('files.share')}
-                                    >
-                                        <Share2 className="w-3.5 h-3.5 text-telegram-primary" />
-                                        <span>Share</span>
-                                    </button>
-                                )}
-
+                                {/* Primary Action 3: Delete */}
                                 <button
                                     onClick={onBulkDelete}
                                     className="flex items-center gap-1.5 px-3 py-1 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs rounded-full border border-red-500/20 transition-colors cursor-pointer font-medium"
-                                    title={t('files.delete')}
+                                    title="Delete selected"
                                 >
                                     <Trash2 className="w-3.5 h-3.5" />
                                     <span>Delete</span>
                                 </button>
+
+                                {/* More Actions Dropdown Menu (...) */}
+                                {(() => {
+                                    const allKnownFilesMap = new Map<number, TelegramFile>();
+                                    (files || []).forEach(f => allKnownFilesMap.set(f.id, f));
+                                    (offlineFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
+                                    (starredFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
+                                    (trashedFiles || []).forEach(f => allKnownFilesMap.set(f.id, f));
+
+                                    const selectedFileItems = selectedIds.map(id => allKnownFilesMap.get(id)).filter((f): f is TelegramFile => !!f);
+                                    const selectedFolderItems = folders?.filter(f => selectedIds.includes(f.id)) || [];
+
+                                    const hasSelectedFiles = selectedFileItems.length > 0;
+                                    const hasSelectedFolders = selectedFolderItems.length > 0;
+
+                                    const allFilesStarred = hasSelectedFiles && selectedFileItems.every(f => isStarred(f.id));
+                                    const allFoldersStarred = hasSelectedFolders && selectedFolderItems.every(f => isFolderStarred(f.id));
+
+                                    const isAllSelectedStarred = (hasSelectedFiles || hasSelectedFolders) &&
+                                        (!hasSelectedFiles || allFilesStarred) &&
+                                        (!hasSelectedFolders || allFoldersStarred);
+
+                                    const handleToggleStarSelection = () => {
+                                        if (isAllSelectedStarred) {
+                                            selectedIds.forEach(id => unstarFile(id));
+                                            selectedFolderItems.forEach(f => unstarFolder(f.id));
+                                            toast.success(`Removed ${selectedIds.length} item(s) from Starred`);
+                                        } else {
+                                            selectedFileItems.forEach(f => starFile(f));
+                                            selectedFolderItems.forEach(f => {
+                                                starFolder({ id: f.id, name: f.name } as any);
+                                            });
+                                            toast.success(`Added ${selectedIds.length} item(s) to Starred`);
+                                        }
+                                        setShowSelectionMoreMenu(false);
+                                    };
+
+                                    return (
+                                        <div className="relative" ref={selectionMoreMenuRef}>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setShowSelectionMoreMenu(!showSelectionMoreMenu);
+                                                }}
+                                                className={`flex items-center justify-center p-1.5 rounded-full border transition-colors cursor-pointer ${
+                                                    showSelectionMoreMenu
+                                                        ? 'bg-telegram-primary/20 border-telegram-primary/40 text-telegram-primary'
+                                                        : 'bg-telegram-hover hover:bg-telegram-border/60 text-telegram-text border-telegram-border/30'
+                                                }`}
+                                                title="More actions"
+                                            >
+                                                <MoreHorizontal className="w-4 h-4" />
+                                            </button>
+
+                                            {showSelectionMoreMenu && (
+                                                <div className="absolute right-0 mt-2 w-48 bg-telegram-surface border border-telegram-border rounded-xl shadow-xl z-50 py-1 text-xs animate-in fade-in duration-100">
+                                                    {/* Star / Unstar Option */}
+                                                    <button
+                                                        onClick={handleToggleStarSelection}
+                                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-telegram-text hover:bg-telegram-hover transition-colors cursor-pointer"
+                                                    >
+                                                        <Star className={`w-3.5 h-3.5 text-amber-400 ${isAllSelectedStarred ? 'fill-amber-400' : ''}`} />
+                                                        <span>{isAllSelectedStarred ? 'Unstar' : 'Add to Starred'}</span>
+                                                    </button>
+
+                                                    {/* Get Link (Single Folder) */}
+                                                    {selectedIds.length === 1 && folders.some(f => f.id === selectedIds[0]) && onExportInvite && (() => {
+                                                        const folder = folders.find(f => f.id === selectedIds[0]);
+                                                        return folder ? (
+                                                            <button
+                                                                onClick={() => {
+                                                                    onExportInvite(folder.id, folder.name);
+                                                                    setShowSelectionMoreMenu(false);
+                                                                }}
+                                                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-telegram-text hover:bg-telegram-hover transition-colors cursor-pointer"
+                                                            >
+                                                                <Share2 className="w-3.5 h-3.5 text-telegram-primary" />
+                                                                <span>Get Link</span>
+                                                            </button>
+                                                        ) : null;
+                                                    })()}
+
+                                                    {/* Rename (Single Folder) */}
+                                                    {selectedIds.length === 1 && folders.some(f => f.id === selectedIds[0]) && onFolderRename && (() => {
+                                                        const folder = folders.find(f => f.id === selectedIds[0]);
+                                                        return folder ? (
+                                                            <button
+                                                                onClick={() => {
+                                                                    onFolderRename(folder.id, folder.name);
+                                                                    setShowSelectionMoreMenu(false);
+                                                                }}
+                                                                className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-telegram-text hover:bg-telegram-hover transition-colors cursor-pointer"
+                                                            >
+                                                                <Pencil className="w-3.5 h-3.5 text-blue-400" />
+                                                                <span>Rename</span>
+                                                            </button>
+                                                        ) : null;
+                                                    })()}
+
+                                                    {/* Remove Offline (Offline Tab) */}
+                                                    {currentTab === 'offline' && (
+                                                        <button
+                                                            onClick={() => {
+                                                                selectedIds.forEach(id => removeOfflineAccess(id));
+                                                                toast.success(`Removed offline access for ${selectedIds.length} item(s)`);
+                                                                onClearSelection();
+                                                                setShowSelectionMoreMenu(false);
+                                                            }}
+                                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-telegram-text hover:bg-telegram-hover transition-colors cursor-pointer"
+                                                        >
+                                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400/20" />
+                                                            <span>Remove Offline</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </>
                         )}
                     </div>

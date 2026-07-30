@@ -9,8 +9,7 @@ import { check, Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { useSettings } from '../../../context/SettingsContext';
 import { useConfirm } from '../../../context/ConfirmContext';
-import { useTranslation } from 'react-i18next';
-import { ShareInfo, DetailedCacheInfo } from '../../../types';
+import { DetailedCacheInfo } from '../../../types';
 import { version as appVersion } from '../../../../package.json';
 import { useTheme } from '../../../context/ThemeContext';
 import { CustomTheme, ThemeColorPalette, generateThemeId } from '../../../theme/themeEngine';
@@ -26,7 +25,6 @@ type SettingsTab = 'themes' | 'proxy' | 'cache' | 'behavior' | 'privacy' | 'upda
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const { settings, updateSetting, resetSettings } = useSettings();
     const { confirm } = useConfirm();
-    const { t } = useTranslation();
     const [clearing, setClearing] = useState(false);
 
     // Transcode cache state
@@ -52,23 +50,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             if (updateInfo) {
                 setUpdateAvailable(updateInfo);
                 setUpdateVersion(updateInfo.version);
-                toast.success(t('settings.update_available_toast', { version: updateInfo.version }));
+                toast.success(`Update available: v${updateInfo.version}`);
             } else {
                 setUpdateAvailable(null);
                 setUpdateVersion(null);
-                toast.success(t('settings.latest_version_toast'));
+                toast.success('You are using the latest version.');
             }
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             if (msg.includes('dev') || msg.includes('no current version')) {
-                toast.info(t('settings.update_prod_only_toast'));
+                toast.info('Auto-update is available in production builds.');
             } else {
-                toast.error(t('settings.update_check_failed_toast', { error: msg }));
+                toast.error(`Update check failed: ${msg}`);
             }
         } finally {
             setUpdateChecking(false);
         }
-    }, [t]);
+    }, []);
 
     const handleInstallUpdate = useCallback(async () => {
         if (!updateAvailable) return;
@@ -92,34 +90,11 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             await relaunch();
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            toast.error(t('settings.update_failed_toast', { error: msg }));
+            toast.error(`Update failed: ${msg}`);
             setUpdateDownloading(false);
         }
-    }, [updateAvailable, t]);
+    }, [updateAvailable]);
 
-    // Sharing settings state
-    const [_shares, setShares] = useState<ShareInfo[]>([]);
-    const [_refreshing, setRefreshing] = useState(false);
-    const [_copiedId, _setCopiedId] = useState<string | null>(null);
-    const [_globalDomain] = useState('');
-
-    const fetchShares = useCallback(async () => {
-        setRefreshing(true);
-        try {
-            const list = await invoke<ShareInfo[]>('cmd_list_shares');
-            setShares(list);
-        } catch (e) {
-            toast.error(t('settings.load_shares_failed', { error: e }));
-        } finally {
-            setRefreshing(false);
-        }
-    }, [t]);
-
-    useEffect(() => {
-        if (isOpen && (activeTab as string) === 'sharing') {
-            fetchShares();
-        }
-    }, [isOpen, activeTab, fetchShares]);
 
     // Fetch transcode cache info
     const fetchTranscodeCache = useCallback(async () => {
@@ -249,7 +224,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     <SlidersHorizontal className="w-5 h-5 stroke-[2]" />
                                 </div>
                                 <div>
-                                    <h2 className="text-telegram-text font-bold text-base tracking-tight">{t('settings.title')}</h2>
+                                    <h2 className="text-telegram-text font-bold text-base tracking-tight">Settings</h2>
                                     <p className="text-xs text-telegram-subtext">Manage appearance, network proxies, storage, and app preferences</p>
                                 </div>
                             </div>
@@ -265,20 +240,20 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                         <div className="flex flex-1 min-h-0 overflow-hidden">
                             {/* Left Navigation Sidebar */}
                             <div className="w-60 border-r border-telegram-border/50 bg-telegram-hover/10 p-3 space-y-1 overflow-y-auto shrink-0 select-none">
-                                {([
+                                {[
                                     { id: 'themes', label: 'Appearance & Themes', icon: Palette },
                                     { id: 'proxy', label: 'Proxy & Connection', icon: Shield },
                                     { id: 'cache', label: 'Storage & Cache', icon: HardDrive },
                                     { id: 'behavior', label: 'Behavior & UI', icon: SlidersHorizontal },
                                     { id: 'privacy', label: 'Privacy & Security', icon: Key },
                                     { id: 'updates', label: 'Updates & About', icon: Sparkles },
-                                ] as const).map((sec) => {
+                                ].map((sec) => {
                                     const Icon = sec.icon;
                                     const isActive = activeTab === sec.id;
                                     return (
                                         <button
                                             key={sec.id}
-                                            onClick={() => setActiveTab(sec.id)}
+                                            onClick={() => setActiveTab(sec.id as SettingsTab)}
                                             className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left transition-all cursor-pointer ${
                                                 isActive
                                                     ? 'bg-telegram-primary text-black font-bold shadow-md shadow-telegram-primary/20'
@@ -344,20 +319,20 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         }`} />
                                                         <div>
                                                             <div className="flex items-center gap-2">
-                                                                <p className="text-xs font-bold text-telegram-text">{t('common.enable_proxy')}</p>
+                                                                <p className="text-xs font-bold text-telegram-text">Enable Network Proxy</p>
                                                                 {settings.proxyEnabled && (
                                                                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-telegram-primary/10 text-telegram-primary font-mono font-bold">
                                                                         {!settings.proxyLiveStateEnabled
-                                                                            ? t('settings.proxy_status_off') || 'Off'
+                                                                            ? 'Off'
                                                                             : !proxyStatus 
-                                                                                ? t('settings.proxy_status_checking') || 'Checking…' 
+                                                                                ? 'Checking…' 
                                                                                 : proxyStatus.reachable 
-                                                                                    ? `${t('settings.proxy_status_connected') || 'Connected'} (${proxyStatus.latency_ms}ms)` 
-                                                                                    : t('settings.proxy_status_unreachable') || 'Unreachable'}
+                                                                                    ? `Connected (${proxyStatus.latency_ms}ms)` 
+                                                                                    : 'Unreachable'}
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">{t('settings.enable_proxy_desc')}</p>
+                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">Route app network traffic through SOCKS5 or HTTP/HTTPS proxy</p>
                                                         </div>
                                                     </div>
                                                     <button
@@ -372,8 +347,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 {settings.proxyEnabled && (
                                                     <div className="flex items-center justify-between p-4 rounded-xl bg-telegram-hover/20 border border-telegram-border/40">
                                                         <div>
-                                                            <p className="text-xs font-bold text-telegram-text">{t('settings.live_state') || 'Live Connection Monitoring'}</p>
-                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">{t('settings.live_state_desc') || 'Periodically check connectivity and display latency'}</p>
+                                                            <p className="text-xs font-bold text-telegram-text">Live Connection Monitoring</p>
+                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">Periodically check connectivity and display latency</p>
                                                         </div>
                                                         <button
                                                             onClick={() => updateSetting('proxyLiveStateEnabled', !settings.proxyLiveStateEnabled)}
@@ -387,7 +362,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                 {/* Proxy Type & Host/Port Grid */}
                                                 <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-telegram-hover/20 border border-telegram-border/40">
                                                     <div>
-                                                        <label className="text-xs font-bold text-telegram-text block mb-1">{t('common.proxy_type')}</label>
+                                                        <label className="text-xs font-bold text-telegram-text block mb-1">Proxy Protocol</label>
                                                         <select
                                                             value={settings.proxyType}
                                                             onChange={e => updateSetting('proxyType', e.target.value as 'socks5' | 'http' | 'https')}
@@ -400,7 +375,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
 
                                                     <div>
-                                                        <label className="text-xs font-bold text-telegram-text block mb-1">{t('common.host')}</label>
+                                                        <label className="text-xs font-bold text-telegram-text block mb-1">Host Server</label>
                                                         <input
                                                             type="text"
                                                             placeholder="127.0.0.1"
@@ -411,7 +386,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
 
                                                     <div>
-                                                        <label className="text-xs font-bold text-telegram-text block mb-1">{t('common.port')}</label>
+                                                        <label className="text-xs font-bold text-telegram-text block mb-1">Port</label>
                                                         <input
                                                             type="number"
                                                             min="1"
@@ -423,7 +398,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
 
                                                     <div>
-                                                        <label className="text-xs font-bold text-telegram-text block mb-1">{t('common.username')}</label>
+                                                        <label className="text-xs font-bold text-telegram-text block mb-1">Username</label>
                                                         <input
                                                             type="text"
                                                             placeholder="Optional"
@@ -460,18 +435,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     <button
                                                         onClick={async () => {
                                                             const ok = await confirm({
-                                                                title: t('settings.clear_cache_confirm_title'),
-                                                                message: t('settings.clear_cache_confirm_desc'),
-                                                                confirmText: t('common.clear'),
+                                                                title: 'Clear Cache?',
+                                                                message: 'Are you sure you want to clear temporary cache files?',
+                                                                confirmText: 'Clear Cache',
                                                                 variant: 'danger',
                                                             });
                                                             if (!ok) return;
                                                             setClearing(true);
                                                             try {
                                                                 await invoke('cmd_clear_cache');
-                                                                toast.success(t('settings.cache_cleared_toast'));
+                                                                toast.success('Cache cleared successfully!');
                                                             } catch (e) {
-                                                                toast.error(t('settings.cache_clear_failed_toast', { error: e }));
+                                                                toast.error(`Failed to clear cache: ${e}`);
                                                             } finally {
                                                                 setClearing(false);
                                                             }
@@ -480,7 +455,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         className="px-4 py-2 rounded-xl text-xs font-bold bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 transition disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
-                                                        {clearing ? t('settings.clearing') : t('settings.clear_cache_title')}
+                                                        {clearing ? 'Clearing…' : 'Clear Cache'}
                                                     </button>
                                                 </div>
                                             </div>
@@ -498,7 +473,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         >
                                             <div>
                                                 <h3 className="text-base font-bold text-telegram-text">Behavior & UI Preferences</h3>
-                                                <p className="text-xs text-telegram-subtext mt-0.5">Configure general application preferences, language, and upload behavior.</p>
+                                                <p className="text-xs text-telegram-subtext mt-0.5">Configure general application preferences and upload behavior.</p>
                                             </div>
 
                                             <div className="space-y-3">
@@ -507,8 +482,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     <div className="flex items-center gap-3">
                                                         <FolderArchive className="w-5 h-5 text-telegram-primary shrink-0" />
                                                         <div>
-                                                            <p className="text-xs font-bold text-telegram-text">{t('settings.zip_before_upload')}</p>
-                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">{t('settings.zip_folders_desc')}</p>
+                                                            <p className="text-xs font-bold text-telegram-text">ZIP Folders Before Upload</p>
+                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">Automatically compress folder structures into a single .zip archive before uploading</p>
                                                         </div>
                                                     </div>
                                                     <button
@@ -524,8 +499,8 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     <div className="flex items-center gap-3">
                                                         <Tag className="w-5 h-5 text-telegram-primary shrink-0" />
                                                         <div>
-                                                            <p className="text-xs font-bold text-telegram-text">{t('common.hide_groups')}</p>
-                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">{t('common.hide_groups_desc')}</p>
+                                                            <p className="text-xs font-bold text-telegram-text">Hide Folder Groups</p>
+                                                            <p className="text-[11px] text-telegram-subtext mt-0.5">Hide sidebar group categories for a cleaner single-list view</p>
                                                         </div>
                                                     </div>
                                                     <button
@@ -584,9 +559,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     <div className="flex items-center gap-3">
                                                         <Download className="w-5 h-5 text-telegram-primary shrink-0" />
                                                         <div>
-                                                            <p className="text-xs font-bold text-telegram-text">{t('settings.check_for_updates')}</p>
+                                                            <p className="text-xs font-bold text-telegram-text">Check for Updates</p>
                                                             <p className="text-[11px] text-telegram-subtext mt-0.5">
-                                                                {updateVersion ? t('settings.update_available', { version: updateVersion }) : t('settings.check_updates_desc')}
+                                                                {updateVersion ? `New update v${updateVersion} is available` : 'Keep Telegram Drive updated to the latest build'}
                                                             </p>
                                                         </div>
                                                     </div>
@@ -596,7 +571,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-telegram-primary text-black hover:bg-telegram-primary/90 transition shadow-md"
                                                         >
                                                             <Download className="w-3.5 h-3.5" />
-                                                            {t('settings.update_restart')}
+                                                            Restart & Update
                                                         </button>
                                                     ) : updateDownloading ? (
                                                         <div className="flex items-center gap-2">
@@ -610,7 +585,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                             className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-telegram-primary/10 text-telegram-primary hover:bg-telegram-primary/20 border border-telegram-primary/20 transition disabled:opacity-50 cursor-pointer"
                                                         >
                                                             <RefreshCw className={`w-3.5 h-3.5 ${updateChecking ? 'animate-spin' : ''}`} />
-                                                            {updateChecking ? t('settings.checking') : t('settings.check_now')}
+                                                            {updateChecking ? 'Checking…' : 'Check Now'}
                                                         </button>
                                                     )}
                                                 </div>
@@ -638,9 +613,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         try {
                                                             const info = await invoke<string>('cmd_get_system_diagnostics');
                                                             await navigator.clipboard.writeText(info);
-                                                            toast.success(t('settings.diagnostics_copied'));
+                                                            toast.success('Diagnostics copied to clipboard!');
                                                         } catch (e) {
-                                                            toast.error(t('settings.diagnostics_copy_failed', { error: e }));
+                                                            toast.error(`Failed to copy diagnostics: ${e}`);
                                                         } finally {
                                                             setDiagLoading(false);
                                                         }
@@ -649,7 +624,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium bg-telegram-hover border border-telegram-border/50 text-telegram-subtext hover:text-telegram-text hover:bg-telegram-hover/80 transition disabled:opacity-50 cursor-pointer"
                                                 >
                                                     {diagLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clipboard className="w-3.5 h-3.5" />}
-                                                    {t('settings.copy_diagnostics')}
+                                                    Copy Diagnostics
                                                 </button>
 
                                                 <div className="flex justify-center gap-4 text-xs pt-1">
@@ -682,13 +657,13 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs text-telegram-subtext hover:text-red-400 hover:bg-red-500/10 transition font-medium cursor-pointer"
                             >
                                 <RotateCcw className="w-3.5 h-3.5" />
-                                {t('settings.reset_defaults')}
+                                Reset to Defaults
                             </button>
                             <button
                                 onClick={onClose}
                                 className="px-6 py-2 rounded-xl text-xs font-bold bg-telegram-primary text-black hover:bg-telegram-primary/90 shadow-md transition cursor-pointer"
                             >
-                                {t('settings.done')}
+                                Done
                             </button>
                         </div>
                     </motion.div>
@@ -697,17 +672,16 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         </AnimatePresence>
     );
 }
-const PALETTE_KEYS: { key: keyof ThemeColorPalette; labelKey: string }[] = [
-    { key: 'bg', labelKey: 'settings.color_bg' },
-    { key: 'surface', labelKey: 'settings.color_surface' },
-    { key: 'primary', labelKey: 'settings.color_primary' },
-    { key: 'secondary', labelKey: 'settings.color_secondary' },
-    { key: 'text', labelKey: 'settings.color_text' },
-    { key: 'subtext', labelKey: 'settings.color_subtext' },
+const PALETTE_KEYS: { key: keyof ThemeColorPalette; label: string }[] = [
+    { key: 'bg', label: 'Background' },
+    { key: 'surface', label: 'Surface' },
+    { key: 'primary', label: 'Primary' },
+    { key: 'secondary', label: 'Secondary' },
+    { key: 'text', label: 'Text' },
+    { key: 'subtext', label: 'Subtext' },
 ];
 
 function ThemesTab() {
-    const { t } = useTranslation();
     const {
         customThemes,
         activeCustomThemeId,
@@ -754,9 +728,9 @@ function ThemesTab() {
 
     const handleDeleteTheme = async (id: string) => {
         const ok = await confirm({
-            title: t('settings.delete_theme'),
-            message: t('settings.delete_theme_confirm'),
-            confirmText: t('common.delete'),
+            title: 'Delete Theme',
+            message: 'Are you sure you want to delete this theme?',
+            confirmText: 'Delete',
             variant: 'danger',
         });
         if (!ok) return;
@@ -793,7 +767,7 @@ function ThemesTab() {
             <div className="space-y-2">
                 <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider flex items-center gap-2">
                     <Palette className="w-3.5 h-3.5" />
-                    {t('settings.presets')}
+                    Presets
                 </h3>
                 <div className="grid grid-cols-4 gap-2">
                     {builtinThemes.map(theme => (
@@ -830,7 +804,7 @@ function ThemesTab() {
             <div className="space-y-2">
                 <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider flex items-center gap-2">
                     <Sparkles className="w-3.5 h-3.5" />
-                    {t('settings.custom_themes')}
+                    Custom Themes
                 </h3>
 
                 {userThemes.length > 0 && (
@@ -869,7 +843,7 @@ function ThemesTab() {
                     className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-telegram-border text-telegram-subtext hover:text-telegram-primary hover:border-telegram-primary/50 transition-colors text-xs"
                 >
                     <Plus className="w-3.5 h-3.5" />
-                    {t('settings.create_theme')}
+                    New Theme
                 </button>
             </div>
 
@@ -877,12 +851,12 @@ function ThemesTab() {
             {editingTheme && !editingTheme.isBuiltin && (
                 <div className="space-y-3 p-3 rounded-lg bg-telegram-hover/30 border border-telegram-border/50">
                     <h3 className="text-xs font-semibold text-telegram-subtext uppercase tracking-wider">
-                        {t('settings.edit_theme')}
+                        Edit Theme
                     </h3>
 
                     {/* Theme Name */}
                     <div className="flex items-center gap-2">
-                        <label className="text-xs text-telegram-subtext w-16 shrink-0">{t('settings.theme_name')}</label>
+                        <label className="text-xs text-telegram-subtext w-16 shrink-0">Name</label>
                         <input
                             type="text"
                             value={editingTheme.name}
@@ -894,7 +868,7 @@ function ThemesTab() {
 
                     {/* Base Mode Toggle */}
                     <div className="flex items-center gap-2">
-                        <label className="text-xs text-telegram-subtext w-16 shrink-0">{t('settings.base_mode')}</label>
+                        <label className="text-xs text-telegram-subtext w-16 shrink-0">Base Mode</label>
                         <div className="flex gap-1">
                             <button
                                 onClick={() => handleBaseToggle(true)}
@@ -921,9 +895,9 @@ function ThemesTab() {
 
                     {/* Color Pickers */}
                     <div className="space-y-2">
-                        {PALETTE_KEYS.map(({ key, labelKey }) => (
+                        {PALETTE_KEYS.map(({ key, label }) => (
                             <div key={key} className="flex items-center gap-2">
-                                <label className="text-xs text-telegram-subtext w-16 shrink-0">{t(labelKey)}</label>
+                                <label className="text-xs text-telegram-subtext w-16 shrink-0">{label}</label>
                                 <div className="flex items-center gap-1.5 flex-1">
                                     <input
                                         type="color"
@@ -949,7 +923,7 @@ function ThemesTab() {
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:bg-red-500/10 transition"
                     >
                         <Trash2 className="w-3.5 h-3.5" />
-                        {t('settings.delete_theme')}
+                        Delete Theme
                     </button>
                 </div>
             )}
@@ -964,7 +938,7 @@ function ThemesTab() {
                     className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-telegram-subtext hover:text-telegram-text bg-telegram-hover/50 hover:bg-telegram-hover transition"
                 >
                     <RotateCcw className="w-3.5 h-3.5" />
-                    {t('settings.reset_default')}
+                    Reset to Default
                 </button>
             )}
         </motion.section>

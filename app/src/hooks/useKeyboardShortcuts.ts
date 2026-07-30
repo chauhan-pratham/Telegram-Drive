@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 
 interface UseKeyboardShortcutsProps {
     onSelectAll: () => void;
@@ -7,8 +7,16 @@ interface UseKeyboardShortcutsProps {
     onSearch: () => void;
     onEnter?: () => void;
     onDownload?: () => void;
-    onShare?: () => void;
     onRename?: () => void;
+    onStar?: () => void;
+    onMove?: () => void;
+    onPreview?: () => void;
+    onToggleView?: () => void;
+    onToggleInfoPanel?: () => void;
+    onUploadFile?: () => void;
+    onUploadFolder?: () => void;
+    onNewFolder?: () => void;
+    onShowShortcutsHelp?: () => void;
     enabled?: boolean;
 }
 
@@ -19,10 +27,30 @@ export function useKeyboardShortcuts({
     onSearch,
     onEnter,
     onDownload,
-    onShare,
     onRename,
+    onStar,
+    onMove,
+    onPreview,
+    onToggleView,
+    onToggleInfoPanel,
+    onUploadFile,
+    onUploadFolder,
+    onNewFolder,
+    onShowShortcutsHelp,
     enabled = true
 }: UseKeyboardShortcutsProps) {
+    // Two-key sequence state: tracks the first key of a chord (e.g. Alt+V)
+    const pendingChordRef = useRef<string | null>(null);
+    const chordTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const clearChord = useCallback(() => {
+        pendingChordRef.current = null;
+        if (chordTimerRef.current) {
+            clearTimeout(chordTimerRef.current);
+            chordTimerRef.current = null;
+        }
+    }, []);
+
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
         if (!enabled) return;
 
@@ -38,18 +66,91 @@ export function useKeyboardShortcuts({
         }
 
         const isMod = e.metaKey || e.ctrlKey;
+        const key = e.key.toLowerCase();
+
+        // Alt + V - Toggle grid / list view
+        if (e.altKey && !isMod && key === 'v') {
+            e.preventDefault();
+            onToggleView?.();
+            return;
+        }
+
+        // Alt + I - Toggle details / info panel
+        if (e.altKey && !isMod && key === 'i') {
+            e.preventDefault();
+            onToggleInfoPanel?.();
+            return;
+        }
+
+        // ── Single-key shortcuts ───────────────────────────────
+
+        // / (slash) - Quick search focus (only without modifiers)
+        if (e.key === '/' && !isMod && !e.altKey && !e.shiftKey) {
+            e.preventDefault();
+            onSearch();
+            return;
+        }
+
+        // Ctrl/Cmd + / - Show keyboard shortcuts help
+        if (isMod && e.key === '/') {
+            e.preventDefault();
+            onShowShortcutsHelp?.();
+            return;
+        }
 
         // Cmd/Ctrl + A - Select All
-        if (isMod && e.key.toLowerCase() === 'a') {
+        if (isMod && key === 'a' && !e.altKey && !e.shiftKey) {
             e.preventDefault();
             onSelectAll();
             return;
         }
 
         // Cmd/Ctrl + F - Focus Search
-        if (isMod && e.key.toLowerCase() === 'f') {
+        if (isMod && key === 'f') {
             e.preventDefault();
             onSearch();
+            return;
+        }
+
+        // Ctrl/Cmd + Shift + N - Create new folder
+        if (isMod && e.shiftKey && key === 'n') {
+            e.preventDefault();
+            onNewFolder?.();
+            return;
+        }
+
+        // Ctrl/Cmd + Shift + U - Upload folder (ZIP)
+        if (isMod && e.shiftKey && key === 'u') {
+            e.preventDefault();
+            onUploadFolder?.();
+            return;
+        }
+
+        // Ctrl/Cmd + U - Upload file
+        if (isMod && !e.shiftKey && key === 'u') {
+            e.preventDefault();
+            onUploadFile?.();
+            return;
+        }
+
+        // Alt + S - Star/Unstar selected items
+        if (e.altKey && !isMod && key === 's') {
+            e.preventDefault();
+            onStar?.();
+            return;
+        }
+
+        // Alt + M - Move selected items to folder
+        if (e.altKey && !isMod && key === 'm') {
+            e.preventDefault();
+            onMove?.();
+            return;
+        }
+
+        // Alt + P - Preview selected item
+        if (e.altKey && !isMod && key === 'p') {
+            e.preventDefault();
+            onPreview?.();
             return;
         }
 
@@ -63,9 +164,11 @@ export function useKeyboardShortcuts({
         // Escape - Clear selection
         if (e.key === 'Escape') {
             e.preventDefault();
+            clearChord();
             onEscape();
             return;
         }
+
         // Enter - Open / Preview
         if (e.key === 'Enter') {
             e.preventDefault();
@@ -80,23 +183,22 @@ export function useKeyboardShortcuts({
             return;
         }
 
-        // Ctrl/Cmd + D - Download selected
-        if (isMod && e.key.toLowerCase() === 'd') {
+        // Alt + D - Download selected
+        if (e.altKey && !isMod && key === 'd') {
             e.preventDefault();
             onDownload?.();
             return;
         }
 
-        // Ctrl/Cmd + Shift + S - Share selected
-        if (isMod && e.shiftKey && e.key.toLowerCase() === 's') {
-            e.preventDefault();
-            onShare?.();
-            return;
-        }
-    }, [enabled, onSelectAll, onDelete, onEscape, onSearch, onEnter, onDownload, onShare, onRename]);
+    }, [enabled, onSelectAll, onDelete, onEscape, onSearch, onEnter, onDownload, onRename,
+        onStar, onMove, onPreview, onToggleView, onToggleInfoPanel, onUploadFile, onUploadFolder,
+        onNewFolder, onShowShortcutsHelp, clearChord]);
 
     useEffect(() => {
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [handleKeyDown]);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            clearChord();
+        };
+    }, [handleKeyDown, clearChord]);
 }

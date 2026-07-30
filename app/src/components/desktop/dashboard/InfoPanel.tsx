@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, File, Star, Download, Share2, Pencil, Trash2, Folder, FolderInput, RotateCcw, Users } from 'lucide-react';
+import { X, File, Star, Download, Pencil, Trash2, Folder, FolderInput, RotateCcw, Users, Share2 } from 'lucide-react';
 import { TelegramFile, TelegramFolder, FolderParticipantInfo } from '../../../types';
 import { FileTypeIcon } from '../../shared/FileTypeIcon';
 import { useDrive } from '../../../context/DriveContext';
@@ -90,7 +90,6 @@ interface InfoPanelProps {
     onDownload: (file: TelegramFile) => void;
     onDelete: (file: TelegramFile) => void;
     onRename: (file: TelegramFile) => void;
-    onShare: (file: TelegramFile) => void;
     onMove: (file: TelegramFile) => void;
     onFolderRename: (id: number, name: string) => void;
     onFolderDelete: (id: number, name: string) => void;
@@ -105,7 +104,6 @@ export function InfoPanel({
     onDownload,
     onDelete,
     onRename,
-    onShare,
     onMove,
     onFolderRename,
     onFolderDelete,
@@ -481,13 +479,7 @@ export function InfoPanel({
                                                                 <Download className="w-3.5 h-3.5" />
                                                                 Download
                                                             </button>
-                                                            <button
-                                                                onClick={() => onShare(file)}
-                                                                className="flex items-center justify-center gap-1.5 px-3 py-2 bg-telegram-hover text-telegram-text rounded-lg text-xs hover:bg-white/10 transition-colors cursor-pointer"
-                                                            >
-                                                                <Share2 className="w-3.5 h-3.5" />
-                                                                Share
-                                                            </button>
+
                                                             <button
                                                                 onClick={() => onRename(file)}
                                                                 className="flex items-center justify-center gap-1.5 px-3 py-2 bg-telegram-hover text-telegram-text rounded-lg text-xs hover:bg-white/10 transition-colors cursor-pointer"

@@ -21,8 +21,6 @@ interface TouchFileListProps {
   onBulkDelete: () => void;
   onBulkDownload: () => void;
   onBulkMove: (targetFolderId: number | null) => void;
-  onBulkShare?: () => void;
-  onShare?: (file: TelegramFile) => void;
   onCopyTelegramLink?: (file: TelegramFile) => void;
   folders: TelegramFolder[];
   activeFolderId: number | null;
@@ -35,7 +33,7 @@ interface TouchFileListProps {
 export function TouchFileList({
   files, isLoading, onDownload, onDelete, onPreview, onRename,
   selectedIds, onToggleSelection, onSelectAll: _onSelectAll, onClearSelection: _onClearSelection,
-  onBulkDelete: _onBulkDelete, onBulkDownload: _onBulkDownload, onBulkMove, onBulkShare: _onBulkShare, onShare: _onShare,
+  onBulkDelete: _onBulkDelete, onBulkDownload: _onBulkDownload, onBulkMove,
   onCopyTelegramLink, folders, activeFolderId, mutatingFolderIds: _mutatingFolderIds = [],
   scrollContainerRef, viewMode = 'grid', hideEmptyState = false
 }: TouchFileListProps) {

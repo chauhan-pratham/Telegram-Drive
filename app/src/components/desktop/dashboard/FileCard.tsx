@@ -58,7 +58,7 @@ async function getVideoThumbnailStreamUrl(file: TelegramFile, folderId: number |
 
 function isImageFile(filename: string, mime?: string): boolean {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
-    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext) || Boolean(mime?.startsWith('image/'));
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico', 'heic', 'heif'].includes(ext) || Boolean(mime?.startsWith('image/'));
 }
 
 function isVideoFile(filename: string, mime?: string): boolean {
@@ -171,22 +171,30 @@ export function FileCard({ file, onDelete: _onDelete, onDownload: _onDownload, o
         <div
             ref={cardRef}
             className="relative"
-            draggable={!isFolder}
+            draggable={file.id !== -999}
             onContextMenu={onContextMenu}
             onClick={onClick}
-            onDragStart={!isFolder ? (e: any) => {
-                const idsToDrag = selectedIds && selectedIds.includes(file.id) ? selectedIds : [file.id];
-                if (onDragStart) onDragStart(idsToDrag);
-                e.dataTransfer.setData("application/x-telegram-file-ids", JSON.stringify(idsToDrag));
-                e.dataTransfer.effectAllowed = 'move';
-                const dragCount = idsToDrag.length;
-                const ghost = createDragGhost(file.name, isFolder, dragCount);
-                e.dataTransfer.setDragImage(ghost, 0, 0);
-                requestAnimationFrame(() => ghost.remove());
-            } : undefined}
-            onDragEnd={!isFolder ? () => {
-                if (onDragEnd) onDragEnd();
-            } : undefined}
+            onDragStart={(e: any) => {
+                if (isFolder) {
+                    e.dataTransfer.setData("application/x-telegram-folder-id", file.id.toString());
+                    e.dataTransfer.effectAllowed = 'move';
+                    const ghost = createDragGhost(file.name, true, 1);
+                    e.dataTransfer.setDragImage(ghost, 0, 0);
+                    requestAnimationFrame(() => ghost.remove());
+                } else {
+                    const idsToDrag = selectedIds && selectedIds.includes(file.id) ? selectedIds : [file.id];
+                    if (onDragStart) onDragStart(idsToDrag);
+                    e.dataTransfer.setData("application/x-telegram-file-ids", JSON.stringify(idsToDrag));
+                    e.dataTransfer.effectAllowed = 'move';
+                    const dragCount = idsToDrag.length;
+                    const ghost = createDragGhost(file.name, false, dragCount);
+                    e.dataTransfer.setDragImage(ghost, 0, 0);
+                    requestAnimationFrame(() => ghost.remove());
+                }
+            }}
+            onDragEnd={() => {
+                if (!isFolder && onDragEnd) onDragEnd();
+            }}
             onDragOver={(e) => {
                 if (isFolder) {
                     e.preventDefault();

@@ -68,7 +68,8 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
                     username TEXT,
                     is_public INTEGER NOT NULL DEFAULT 0,
                     display_order INTEGER NOT NULL DEFAULT 0,
-                    group_id INTEGER
+                    group_id INTEGER,
+                    parent_id INTEGER
                 );"
             ) {
                 Ok(_) => {
@@ -95,7 +96,10 @@ pub fn init_db(app: &AppHandle) -> Result<DbConnection, String> {
             ));
         }
     }
-    
+
+    // Migration: Ensure parent_id column exists for existing DBs
+    let _ = conn.execute("ALTER TABLE folder_metadata ADD COLUMN parent_id INTEGER;", []);
+
     log::info!("SQLite database initialized successfully using rusqlite.");
     Ok(Arc::new(Mutex::new(conn)))
 }
@@ -106,7 +110,7 @@ pub fn replace_local_state_from_manifest(conn: &Connection, manifest: &crate::mo
 
     tx.execute("DELETE FROM folder_metadata;", []).map_err(|e| e.to_string())?;
     let mut folder_stmt = tx.prepare(
-        "INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id) VALUES (?, ?, ?, ?, ?, ?);"
+        "INSERT INTO folder_metadata (channel_id, name, username, is_public, display_order, group_id, parent_id) VALUES (?, ?, ?, ?, ?, ?, ?);"
     ).map_err(|e| e.to_string())?;
 
     for f in &manifest.folders {
@@ -117,6 +121,7 @@ pub fn replace_local_state_from_manifest(conn: &Connection, manifest: &crate::mo
             if f.is_public { 1 } else { 0 },
             f.display_order as i64,
             f.group_id.map(|id| id as i64),
+            f.parent_id,
         ]).map_err(|e| e.to_string())?;
     }
     drop(folder_stmt);
@@ -130,7 +135,7 @@ pub fn export_manifest_from_local_state(conn: &Connection) -> Result<crate::mode
     let groups = Vec::new();
     let mut folders = Vec::new();
 
-    let mut f_stmt = conn.prepare("SELECT channel_id, name, username, is_public, display_order, group_id FROM folder_metadata;").map_err(|e| e.to_string())?;
+    let mut f_stmt = conn.prepare("SELECT channel_id, name, username, is_public, display_order, group_id, parent_id FROM folder_metadata;").map_err(|e| e.to_string())?;
     let rows = f_stmt.query_map([], |row| {
         Ok(crate::models::FolderManifestEntry {
             id: row.get(0)?,
@@ -139,6 +144,7 @@ pub fn export_manifest_from_local_state(conn: &Connection) -> Result<crate::mode
             is_public: row.get::<_, i64>(3)? == 1,
             display_order: row.get::<_, i64>(4)? as i32,
             group_id: row.get::<_, Option<i64>>(5)?.map(|id| id as i32),
+            parent_id: row.get(6)?,
         })
     }).map_err(|e| e.to_string())?;
 

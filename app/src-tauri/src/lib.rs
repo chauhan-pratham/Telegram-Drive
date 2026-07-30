@@ -40,6 +40,7 @@ fn init_com_on_worker_thread() {
 
 pub mod commands;
 pub mod bandwidth;
+pub mod diagnostics;
 pub mod vpn_optimizer;
 pub mod socks5_bridge;
 
@@ -486,8 +487,6 @@ fn cmd_get_system_diagnostics(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
-
     let stream_token = generate_stream_token();
 
     // Shared handle for stopping the Actix streaming server during shutdown
@@ -516,6 +515,12 @@ pub fn run() {
 
     let app = builder
         .setup(move |app| {
+            if let Ok(log_path) = diagnostics::init(app.handle()) {
+                log::info!("Diagnostic logging initialized at {}", log_path.display());
+            } else {
+                eprintln!("Diagnostic logging could not be initialized");
+            }
+
             // Eagerly initialize grammers_session / libsql before any rusqlite database opens.
             // This ensures libsql configures the global SQLite C engine before it becomes INITIALIZED.
             tauri::async_runtime::block_on(async {
@@ -837,12 +842,12 @@ pub fn run() {
             commands::cmd_get_files,
             commands::cmd_upload_file,
             commands::initiate_upload,
-            commands::cmd_upload_from_url,
             cmd_open_file_externally,
             upload_service::cmd_start_foreground_service,
             upload_service::cmd_stop_foreground_service,
             commands::cmd_connect,
             commands::cmd_log,
+            commands::cmd_log_error,
             commands::cmd_delete_file,
             commands::cmd_download_file,
             commands::cmd_get_offline_dir,
@@ -852,6 +857,7 @@ pub fn run() {
             commands::cmd_create_folder,
             commands::cmd_delete_folder,
             commands::cmd_rename_folder,
+            commands::cmd_move_folder,
             commands::cmd_rename_file,
             commands::cmd_get_bandwidth,
             commands::cmd_get_total_files_size,
@@ -899,8 +905,6 @@ pub fn run() {
             cmd_get_system_diagnostics,
             commands::cmd_get_video_metadata,
             commands::cmd_get_video_metadata_batch,
-            commands::cmd_list_archive_contents,
-            commands::cmd_extract_archive_entry,
             commands::cmd_get_enriched_folders,
             commands::cmd_update_folder_order,
         ])

@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { TelegramFile, TelegramFolder } from '../types';
+
 
 export interface TrashedFolder {
     id: number;
@@ -229,11 +231,13 @@ export function DriveProvider({ children }: { children: ReactNode }) {
             if (prev.some(f => f?.id === folderId)) return prev;
 
             let folderObj: TelegramFolder;
-            if (typeof folderOrId === 'number') {
-                const found = folders.find(f => f.id === folderId);
-                folderObj = found || ({ id: folderId, name: folderId === -999 ? 'Saved Messages' : `Folder #${folderId}` } as TelegramFolder);
-            } else {
+            const found = folders.find(f => f.id === folderId);
+            if (found) {
+                folderObj = found;
+            } else if (typeof folderOrId === 'object' && folderOrId !== null) {
                 folderObj = folderOrId;
+            } else {
+                folderObj = { id: folderId, name: folderId === -999 ? 'Saved Messages' : `Folder #${folderId}` } as TelegramFolder;
             }
 
             const updated = [folderObj, ...prev];
@@ -353,28 +357,32 @@ export function DriveProvider({ children }: { children: ReactNode }) {
     // Listen to download-progress events from Rust backend for offline downloads
     useEffect(() => {
         let unlistenFn: (() => void) | null = null;
-        import('@tauri-apps/api/event').then(({ listen }) => {
-            listen<any>('download-progress', (event) => {
-                const { id, percent } = event.payload || {};
-                if (id && typeof id === 'string' && id.startsWith('offline_')) {
-                    const fileId = parseInt(id.replace('offline_', ''), 10);
-                    if (!isNaN(fileId)) {
-                        if ((percent ?? 0) >= 100) {
-                            activeOfflineDownloadsRef.current.delete(fileId);
-                        }
-                        setOfflineProgressMap(prev => ({
-                            ...prev,
-                            [fileId]: {
-                                progress: percent ?? 0,
-                                isReady: (percent ?? 0) >= 100
-                            }
-                        }));
+        listen<any>('download-progress', (event) => {
+            const { id, percent } = event.payload || {};
+            if (id && typeof id === 'string' && id.startsWith('offline_')) {
+                const fileId = parseInt(id.replace('offline_', ''), 10);
+                if (!isNaN(fileId)) {
+                    if ((percent ?? 0) >= 100) {
+                        activeOfflineDownloadsRef.current.delete(fileId);
                     }
+                    setOfflineProgressMap(prev => ({
+                        ...prev,
+                        [fileId]: {
+                            progress: percent ?? 0,
+                            isReady: (percent ?? 0) >= 100
+                        }
+                    }));
                 }
-            }).then(fn => { unlistenFn = fn; });
+            }
+        }).then(fn => {
+            unlistenFn = fn;
         });
-        return () => { if (unlistenFn) unlistenFn(); };
+
+        return () => {
+            if (unlistenFn) unlistenFn();
+        };
     }, []);
+
 
     // Check disk for offline file readiness on load or when offline files change
     useEffect(() => {

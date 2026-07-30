@@ -29,13 +29,6 @@ export interface TelegramFolder {
     participants_count?: number | null;
 }
 
-export interface FolderGroup {
-    id: number;
-    name: string;
-    color_hex: string;
-    display_order: number;
-}
-
 export interface FolderInviteInfo {
     link: string;
     is_public: boolean;
@@ -107,23 +100,6 @@ export interface VideoTrackInfo {
     duration?: number;
 }
 
-/** Bandwidth cap in kilobits per second for each quality preset. 0 = unlimited. */
-export const QUALITY_THROTTLE_MAP: Record<StreamingQuality, number> = {
-    '360p': 500,
-    '480p': 1000,
-    '720p': 2500,
-    '1080p': 5000,
-    'original': 0,
-};
-
-/** Thresholds for adaptive quality switching (check from highest to lowest). */
-export const ADAPTIVE_THRESHOLDS: { minKbps: number; quality: StreamingQuality }[] = [
-    { minKbps: 4000, quality: '1080p' },
-    { minKbps: 2000, quality: '720p' },
-    { minKbps: 800, quality: '480p' },
-    { minKbps: 0, quality: '360p' },
-];
-
 export const QUALITY_LABELS: Record<StreamingQuality, string> = {
     '360p': '360p',
     '480p': '480p',
@@ -133,45 +109,6 @@ export const QUALITY_LABELS: Record<StreamingQuality, string> = {
 };
 
 export const HLS_QUALITIES: StreamingQuality[] = ['360p', '480p', '720p', '1080p'];
-export interface TranscodeCapabilities {
-    available: boolean;
-    variants: QualityVariant[];
-    mode: 'hls' | 'original';
-}
-
-export interface QualityVariant {
-    label: string;
-    height: number;
-    available: boolean;
-}
-
-export interface TranscodePrepareResult {
-    job_id: string;
-    status: 'started' | 'pending' | 'caching' | 'transcoding' | 'ready' | 'error' | 'cancelled';
-    progress: number;
-    playlist_url: string | null;
-}
-
-export interface TranscodeStatusResult {
-    job_id: string;
-    status: 'pending' | 'caching' | 'transcoding' | 'ready' | 'error' | 'cancelled';
-    progress: number;
-    error: string | null;
-    playlist_url: string | null;
-}
-
-export interface MasterPlaylistInfo {
-    file_key: string;
-    variants: MasterVariant[];
-    master_playlist_url: string | null;
-}
-
-export interface MasterVariant {
-    bandwidth: number;
-    resolution: string;
-    quality: string;
-    playlist_path: string;
-}
 
 export interface CacheEntry {
     file_key: string;
@@ -186,16 +123,7 @@ export interface DetailedCacheInfo {
     max_bytes: number;
 }
 
-export type TranscodeJobPhase = 'idle' | 'preparing' | 'caching' | 'transcoding' | 'ready' | 'failed';
-
 // ── Rust command return types ────────────────────────────────────────
-
-export interface ArchiveEntry {
-    filename: string;
-    size: number;
-    compressed_size: number;
-    is_dir: boolean;
-}
 
 export interface TranscodeCapabilities {
     available: boolean;
@@ -236,7 +164,6 @@ export interface MasterVariant {
     quality: string;
     playlist_path: string;
 }
-
 
 export interface VideoMetadata {
     duration_secs: number | null;

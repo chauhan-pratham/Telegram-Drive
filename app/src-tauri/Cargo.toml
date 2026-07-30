@@ -73,6 +73,9 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 rusqlite = "0.32"
 
+
+
+
 [package.metadata.tauri.bundle.windows]
 # Embed the WebView2 bootstrapper so the app works on Windows systems
 # where the WebView2 runtime is not pre-installed (fresh installs, servers, etc.)

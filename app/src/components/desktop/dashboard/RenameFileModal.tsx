@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
 import { Pencil, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
 
 interface RenameFileModalProps {
     fileName: string;
@@ -12,7 +11,6 @@ export function RenameFileModal({ fileName, onRename, onClose }: RenameFileModal
     const [name, setName] = useState(fileName);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
-    const { t } = useTranslation();
 
     useEffect(() => {
         inputRef.current?.focus();
@@ -56,7 +54,7 @@ export function RenameFileModal({ fileName, onRename, onClose }: RenameFileModal
                 <div className="p-4 border-b border-telegram-border flex items-center justify-between">
                     <h3 className="text-telegram-text font-medium flex items-center gap-2">
                         <Pencil className="w-4 h-4 text-blue-400" />
-                        {t('files.rename_file')}
+                        Rename File
                     </h3>
                     <button
                         onClick={onClose}
@@ -76,7 +74,7 @@ export function RenameFileModal({ fileName, onRename, onClose }: RenameFileModal
                         onKeyDown={handleKeyDown}
                         maxLength={200}
                         className="w-full bg-telegram-bg border border-telegram-border rounded-lg px-3 py-2 text-sm text-telegram-text placeholder:text-telegram-subtext/50 focus:outline-none focus:ring-2 focus:ring-telegram-primary/50 focus:border-telegram-primary/50 transition-all"
-                        placeholder={t('files.file_name')}
+                        placeholder="File name"
                         disabled={isSubmitting}
                     />
                 </div>
@@ -87,14 +85,14 @@ export function RenameFileModal({ fileName, onRename, onClose }: RenameFileModal
                         className="px-4 py-2 text-sm font-medium text-telegram-subtext hover:text-telegram-text bg-telegram-hover/50 hover:bg-telegram-hover rounded-lg transition-colors"
                         disabled={isSubmitting}
                     >
-                        {t('common.cancel')}
+                        Cancel
                     </button>
                     <button
                         onClick={handleSubmit}
                         disabled={isSubmitting || !name.trim() || name.trim() === fileName}
                         className="px-4 py-2 text-sm font-medium text-white bg-telegram-primary hover:bg-telegram-primary/90 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg transition-colors"
                     >
-                        {isSubmitting ? t('files.renaming') : t('files.rename')}
+                        {isSubmitting ? 'Renaming...' : 'Rename'}
                     </button>
                 </div>
             </div>

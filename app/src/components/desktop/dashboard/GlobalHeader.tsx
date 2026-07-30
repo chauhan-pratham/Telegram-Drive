@@ -1,5 +1,4 @@
-import { Search, Settings, Sun, Moon, SlidersHorizontal, LogOut } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { Search, Settings, Sun, Moon, SlidersHorizontal, LogOut, Loader2 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { FileTypeFilter } from '../../../context/DriveContext';
@@ -14,6 +13,7 @@ interface GlobalHeaderProps {
     toggleTheme: () => void;
     isConnected: boolean;
     onLogout: () => void;
+    isSearching?: boolean;
 }
 
 export function GlobalHeader({
@@ -26,8 +26,8 @@ export function GlobalHeader({
     toggleTheme,
     isConnected,
     onLogout,
+    isSearching = false,
 }: GlobalHeaderProps) {
-    const { t } = useTranslation();
     const [showFilters, setShowFilters] = useState(false);
     const [showProfileMenu, setShowProfileMenu] = useState(false);
     const filterMenuRef = useRef<HTMLDivElement>(null);
@@ -112,11 +112,15 @@ export function GlobalHeader({
             {/* Google Drive styled Search Bar */}
             <div className="flex-1 max-w-2xl mx-8 relative" ref={filterMenuRef}>
                 <div className="flex items-center w-full bg-telegram-surface/60 border border-telegram-border/50 rounded-full px-5 py-2.5 shadow-sm focus-within:bg-telegram-surface focus-within:shadow-md focus-within:border-telegram-primary/20 transition-all gap-3">
-                    <Search className="w-5 h-5 text-telegram-subtext flex-shrink-0" />
+                    {isSearching ? (
+                        <Loader2 className="w-5 h-5 text-telegram-primary flex-shrink-0 animate-spin" />
+                    ) : (
+                        <Search className="w-5 h-5 text-telegram-subtext flex-shrink-0" />
+                    )}
                     <input
                         type="text"
                         data-search-input
-                        placeholder={`${t('common.search_placeholder')} (${getFilterLabel(fileTypeFilter)})`}
+                        placeholder={`Search files... (${getFilterLabel(fileTypeFilter)})`}
                         className="w-full bg-transparent text-sm text-telegram-text placeholder:text-telegram-subtext focus:outline-none"
                         value={searchTerm}
                         onChange={(e) => onSearchChange(e.target.value)}
@@ -161,7 +165,7 @@ export function GlobalHeader({
                 <button
                     onClick={toggleTheme}
                     className="p-2 hover:bg-telegram-hover rounded-full text-telegram-subtext hover:text-telegram-text transition-colors relative group"
-                    title={theme === 'dark' ? t('common.switch_light') : t('common.switch_dark')}
+                    title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                 >
                     {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </button>
@@ -218,7 +222,7 @@ export function GlobalHeader({
                                 className="flex items-center gap-2.5 px-3 py-2 text-sm text-telegram-text hover:bg-telegram-hover rounded-lg text-left transition-colors w-full cursor-pointer font-medium"
                             >
                                 <Settings className="w-4 h-4 text-telegram-primary" />
-                                <span>{t('common.settings', 'Settings')}</span>
+                                <span>Settings</span>
                             </button>
 
                             <button
