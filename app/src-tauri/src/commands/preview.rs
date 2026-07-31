@@ -745,8 +745,6 @@ async fn get_preview_inner(
                     log::info!(target: "preview", "preview.return_thumbnail message_id={} data_url_bytes={}", message_id, data_url.len());
                     return Ok(data_url);
                 }
-            } else {
-                return Err("Preview not supported for non-image file types".to_string());
             }
 
             // Prune the cache here, explicitly preserving the active file being previewed

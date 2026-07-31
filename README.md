@@ -14,7 +14,7 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 * 🍏 **macOS**: Download `Telegram-Drive.dmg` or `.app.tar.gz` (Apple Silicon & Intel)
 * 🐧 **Linux**: Download `Telegram-Drive.AppImage` or `.deb`
 
-👉 **[Download Latest Release (v2.0.0)](https://github.com/chauhan-pratham/Telegram-Drive/releases/latest)**
+👉 **[Download Latest Release (v2.0.1)](https://github.com/chauhan-pratham/Telegram-Drive/releases/latest)**
 
 ---
 
@@ -35,6 +35,10 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 * **Unlimited Cloud Storage**: Harnesses Telegram's infrastructure to store, organize, and manage your files and folders with real-time total storage usage tracking.
 * **🗂️ Multi-Tab Organization**: Effortlessly switch between **My Drive**, **Shared with me**, **Recent**, **Starred**, **Offline**, and **Trash** tabs.
 * **⭐ File & Folder Starring**: Easily star/unstar files and folders from the top action bar, context menu, or details panel, and view them instantly in the **Starred** tab.
+* **🔒 Extension-Locked File Renaming**: Extension-safe file renaming modal for Desktop and Mobile that keeps extension suffixes locked and untouched while allowing clean basename edits.
+* **🛡️ Disguised Executable Pre-Flight Security**: Magic byte inspection (`MZ` / `ELF`) that automatically detects disguised executable binaries (`.exe`, `.elf`) and displays a Red Security Alert Protection Card with safe download options.
+* **🔍 Image Magnifier & Interactive Zoom System**: Smooth 50%–500% wheel zooming, click-and-drag panning, 90° rotation, double-click quick zoom, touch gestures, and keyboard shortcuts (`+`, `-`, `0`).
+* **🎨 Unified Sleek Dark Viewers Header**: Standardized top navigation header (`bg-[#161619]`) with uniform icon sizes and action buttons across all file viewers (Text, PDF, Video, Audio, Office, Images).
 * **🎬 Adaptive HLS Video Streaming & Transcoding**: Stream videos on-the-fly with multi-quality resolution options (360p, 480p, 720p, 1080p, and Original) powered by a local Rust/Actix proxy with HLS caching.
 * **📦 Folder Upload (ZIP) & File Drag-and-Drop**: Upload single/multiple files or compress and upload entire folders directly with live upload/download progress queues.
 * **📱 Responsive Mobile & Touch View**: Adaptive UI with touch-friendly navigation, bottom navigation bar, swipe sheets, and mobile action popovers.

@@ -256,6 +256,39 @@ fn cmd_open_file_externally(path: String, app_handle: tauri::AppHandle) -> Resul
             return Err(format!("File does not exist at: {}", path));
         }
 
+        // SECURITY LOCK: Inspect Magic Bytes header & file extension to block executable binary launches
+        if let Ok(mut f) = std::fs::File::open(&path_buf) {
+            use std::io::Read;
+            let mut header = [0u8; 4];
+            if let Ok(n) = f.read(&mut header) {
+                if n >= 2 {
+                    // Windows Executable (MZ header: 0x4D 0x5A)
+                    if header[0] == b'M' && header[1] == b'Z' {
+                        log::warn!("Security Block: Blocked launch of PE binary file masquerading under path: {}", path);
+                        return Err("Security Error: Executable files cannot be launched directly from Telegram-Drive for security protection.".to_string());
+                    }
+                    // Linux ELF binary (\x7FELF: 0x7F 0x45 0x4C 0x46)
+                    if n >= 4 && header == [0x7F, b'E', b'L', b'F'] {
+                        log::warn!("Security Block: Blocked launch of ELF binary file: {}", path);
+                        return Err("Security Error: Executable files cannot be launched directly from Telegram-Drive for security protection.".to_string());
+                    }
+                    // macOS Mach-O binary
+                    if n >= 4 && (header == [0xFE, 0xED, 0xFA, 0xCE] || header == [0xCF, 0xFA, 0xED, 0xFE] || header == [0xCA, 0xFE, 0xBA, 0xBE]) {
+                        log::warn!("Security Block: Blocked launch of Mach-O binary: {}", path);
+                        return Err("Security Error: Executable files cannot be launched directly from Telegram-Drive for security protection.".to_string());
+                    }
+                }
+            }
+        }
+
+        // Check file extension safety
+        let lower_ext = path_buf.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let dangerous_exts = ["exe", "msi", "scr", "bat", "cmd", "ps1", "vbs", "vbe", "cpl", "com", "hta", "jar", "apk", "app", "dmg", "pkg", "sh"];
+        if dangerous_exts.contains(&lower_ext.as_str()) {
+            log::warn!("Security Block: Blocked launch of dangerous file extension: {}", path);
+            return Err("Security Error: Executable files cannot be launched directly from Telegram-Drive for security protection.".to_string());
+        }
+
         // Try primary Tauri opener plugin
         if app_handle.opener().open_path(&path, None::<&str>).is_ok() {
             return Ok(());
@@ -843,6 +876,7 @@ pub fn run() {
             commands::cmd_upload_file,
             commands::initiate_upload,
             cmd_open_file_externally,
+            commands::cmd_check_file_security,
             upload_service::cmd_start_foreground_service,
             upload_service::cmd_stop_foreground_service,
             commands::cmd_connect,
@@ -863,6 +897,8 @@ pub fn run() {
             commands::cmd_get_total_files_size,
             commands::cmd_delete_preview_for_message,
             commands::cmd_get_preview,
+            commands::cmd_read_text_file,
+            commands::cmd_extract_office_text,
             commands::cmd_get_local_cache_path,
             commands::cmd_clean_local_cache,
             commands::cmd_clean_preview_cache,

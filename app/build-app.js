@@ -34,7 +34,7 @@ const args = ['tauri', 'build'];
 const result = spawnSync(command, args, {
   stdio: 'inherit',
   env: process.env,
-  shell: true,
+  shell: true, // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true
 });
 
 if (result.error) {

@@ -1,11 +1,11 @@
 import { useEffect, useState, useRef } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Download, Trash2 } from 'lucide-react';
+import { FileText, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, ExternalLink, Download, Trash2, ShieldAlert, X } from 'lucide-react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 // Use the legacy build — the modern build uses Map.getOrInsertComputed()
 // which isn't available in Tauri's WebKit WebView
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { TelegramFile } from '../../../types';
-import { isAndroidPlatform } from '../../../utils';
+import { isAndroidPlatform, formatBytes } from '../../../utils';
 
 // Use Vite's ?url suffix to get a properly bundled asset URL for the worker
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
@@ -43,6 +43,7 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
     const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [openingExternal, setOpeningExternal] = useState<boolean>(false);
+    const [securityBlocked, setSecurityBlocked] = useState<boolean>(false);
     const containerRef = useRef<HTMLDivElement>(null);
     const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
 
@@ -55,13 +56,28 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
                 folderId: activeFolderId
             });
             if (path) {
+                const sec = await invoke<{ is_executable: boolean; detected_type: string }>('cmd_check_file_security', {
+                    path,
+                    mime: file.mime_type
+                });
+
+                if (sec.is_executable) {
+                    setSecurityBlocked(true);
+                    return;
+                }
+
                 await invoke('cmd_open_file_externally', { path });
             } else {
                 alert("Failed to locate file path.");
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error("Failed to open externally:", err);
-            alert("Error: " + String(err));
+            const msg = typeof err === 'string' ? err : err?.message || "Failed to open file.";
+            if (msg.toLowerCase().includes("security") || msg.toLowerCase().includes("executable")) {
+                setSecurityBlocked(true);
+            } else {
+                alert("Error: " + msg);
+            }
         } finally {
             setOpeningExternal(false);
         }
@@ -186,10 +202,29 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
                      setNumPages(pdfDoc.numPages);
                      setLoading(false);
                  },
-                 (err) => {
+                 async (err) => {
                      if (timeoutId) window.clearTimeout(timeoutId);
                      if (cancelled || timedOut) return;
                      console.error("Error loading PDF:", err);
+                     try {
+                         const path = await invoke<string>('cmd_get_preview', {
+                             messageId: file.id,
+                             folderId: activeFolderId
+                         });
+                         if (path) {
+                             const sec = await invoke<{ is_executable: boolean; detected_type: string }>('cmd_check_file_security', {
+                                 path,
+                                 mime: file.mime_type
+                             });
+                             if (sec.is_executable) {
+                                 setSecurityBlocked(true);
+                                 setLoading(false);
+                                 return;
+                             }
+                         }
+                     } catch {
+                         // Ignore
+                     }
                      setError("Failed to load PDF preview");
                      setLoading(false);
                  }
@@ -302,67 +337,128 @@ export function PdfViewer({ file, onClose, onNext, onPrev, currentIndex, totalIt
         }
     };
 
+    if (securityBlocked) {
+        return (
+            <div className="fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex flex-col select-none animate-in fade-in duration-200" onClick={onClose}>
+                {/* Header Toolbar */}
+                <div className="w-full flex items-center justify-between px-4 py-3 bg-[#161619] border-b border-white/10 shrink-0 text-white" onClick={e => e.stopPropagation()}>
+                    <div className="flex items-center gap-3">
+                        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer" title="Close (Esc)">
+                            <X className="w-5 h-5" />
+                        </button>
+                        <div className="flex items-center gap-2">
+                            <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 animate-pulse" />
+                            <h2 className="text-sm font-semibold truncate text-white">{file.name}</h2>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Main Security Warning Container */}
+                <div className="flex-1 flex items-center justify-center p-4 sm:p-8">
+                    <div className="w-full max-w-lg bg-[#141417] border border-white/10 rounded-3xl p-8 shadow-2xl flex flex-col items-center text-center relative overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="absolute -top-24 -left-24 w-64 h-64 rounded-full blur-3xl opacity-20 pointer-events-none bg-red-500" />
+                        <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-6 shadow-xl bg-red-500/15 border border-red-500/30 text-red-400">
+                            <ShieldAlert className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-lg font-bold text-white mb-2 break-all">{file.name}</h3>
+                        <div className="flex items-center justify-center gap-2 mb-6 text-xs text-telegram-subtext">
+                            <span className="px-2.5 py-0.5 rounded-full font-bold uppercase bg-red-500/20 text-red-300">
+                                DISGUISED EXECUTABLE BINARY
+                            </span>
+                            <span>•</span>
+                            <span>{formatBytes(file.size)}</span>
+                        </div>
+                        <div className="w-full bg-red-500/10 border border-red-500/25 rounded-2xl p-4 mb-6 text-left text-xs text-red-300 flex gap-3 items-start leading-relaxed">
+                            <ShieldAlert className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                            <div>
+                                <strong className="text-red-200 block mb-0.5">Security Protection Active</strong>
+                                This file contains executable binary code (<code className="font-mono bg-red-950/80 px-1 py-0.5 rounded">MZ</code> header) disguised as a PDF document. Direct launching is blocked for your protection.
+                            </div>
+                        </div>
+                        {onDownload && (
+                            <button onClick={() => onDownload(file)} className="w-full py-3.5 px-6 bg-red-500 hover:bg-red-400 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-xl transition-all cursor-pointer">
+                                <Download className="w-4.5 h-4.5" />
+                                <span>Download File ({formatBytes(file.size)})</span>
+                            </button>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col backdrop-blur-md animate-in fade-in duration-200" onClick={onClose}>
-            {/* Top Header Bar — consistent with PreviewModal & MediaPlayer */}
+            {/* Top Toolbar — unified across all file viewers */}
             <div
-                className="w-full flex items-center justify-between px-4 py-3 bg-black/90 text-white z-50 border-b border-white/10 shrink-0"
+                className="w-full flex items-center justify-between px-4 py-2.5 bg-[#161619] border-b border-white/10 shrink-0 shadow-lg text-white z-50"
                 onClick={e => e.stopPropagation()}
             >
-                {/* Left: Back button + Filename */}
+                {/* Left File Title & Icon */}
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                     <button
                         onClick={onClose}
-                        className="p-1.5 rounded-full hover:bg-white/10 text-white cursor-pointer transition active:scale-95 shrink-0"
-                        title="Back (Esc)"
+                        className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer"
+                        title="Close preview (Esc)"
                     >
-                        <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                        <X className="w-5 h-5" />
                     </button>
-                    <h2 className="text-sm sm:text-base font-semibold text-white truncate tracking-tight" title={file.name}>
-                        {file.name}
-                    </h2>
+
+                    <div className="flex items-center gap-2 min-w-0">
+                        <FileText className="w-5 h-5 text-red-400 shrink-0" />
+                        <h2 className="text-sm font-semibold truncate text-white" title={file.name}>
+                            {file.name}
+                        </h2>
+                    </div>
+
+                    {totalItems && totalItems > 1 && currentIndex !== undefined && (
+                        <span className="text-xs text-telegram-subtext hidden sm:inline-block ml-1">
+                            ({currentIndex + 1} of {totalItems})
+                        </span>
+                    )}
                 </div>
 
-                {/* Right: Zoom controls + Action buttons */}
+                {/* Right Tools & Actions */}
                 <div className="flex items-center gap-2 shrink-0">
-                    {/* Zoom pill */}
-                    <div className="hidden sm:flex items-center gap-1 bg-white/10 p-1 rounded-full border border-white/10 text-xs">
-                        <button onClick={handleZoomOut} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom Out (-)">
+                    {/* Zoom controls */}
+                    <div className="hidden sm:flex items-center gap-1 bg-white/5 px-2 py-1 rounded-lg border border-white/10 text-xs">
+                        <button onClick={handleZoomOut} className="p-1 text-telegram-subtext hover:text-white rounded transition-colors cursor-pointer" title="Zoom Out (-)">
                             <ZoomOut className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={handleFitWidth} className="text-[11px] text-white/90 hover:text-white font-medium min-w-[2.75rem] text-center cursor-pointer transition-colors px-1 py-0.5 rounded hover:bg-white/10" title="Fit to width / Reset zoom">
+                        <button onClick={handleFitWidth} className="text-xs text-white/90 hover:text-white font-mono font-medium min-w-[2.5rem] text-center cursor-pointer transition-colors px-1 py-0.5 rounded hover:bg-white/10" title="Fit to width / Reset zoom">
                             {Math.round(scale * 100)}%
                         </button>
-                        <button onClick={handleZoomIn} className="p-1.5 text-white/70 hover:text-white rounded-full transition-colors cursor-pointer" title="Zoom In (+)">
+                        <button onClick={handleZoomIn} className="p-1 text-telegram-subtext hover:text-white rounded transition-colors cursor-pointer" title="Zoom In (+)">
                             <ZoomIn className="w-3.5 h-3.5" />
                         </button>
                     </div>
 
-                    {/* Action buttons */}
-                    {onDownload && (
-                        <button
-                            onClick={() => onDownload(file)}
-                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all shrink-0 cursor-pointer"
-                            title="Download"
-                        >
-                            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
-                        </button>
-                    )}
                     <button
                         onClick={handleOpenExternally}
                         disabled={openingExternal}
-                        className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 shrink-0 cursor-pointer"
+                        className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition disabled:opacity-50 cursor-pointer"
                         title="Open in System PDF Viewer"
                     >
-                        <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
+                        <ExternalLink className="w-5 h-5" />
                     </button>
+
+                    {onDownload && (
+                        <button
+                            onClick={() => onDownload(file)}
+                            className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer"
+                            title="Download File"
+                        >
+                            <Download className="w-5 h-5" />
+                        </button>
+                    )}
+
                     {onDelete && (
                         <button
                             onClick={() => { onDelete(file); onClose(); }}
-                            className="p-2 text-red-400 hover:text-red-300 bg-white/10 hover:bg-red-500/20 rounded-full transition-all shrink-0 cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 transition cursor-pointer"
                             title="Delete File"
                         >
-                            <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <Trash2 className="w-5 h-5" />
                         </button>
                     )}
                 </div>

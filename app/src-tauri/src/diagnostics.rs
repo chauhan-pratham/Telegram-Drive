@@ -2,7 +2,6 @@ use log::{LevelFilter, Log, Metadata, Record};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
@@ -21,16 +20,13 @@ impl Log for FileLogger {
             return;
         }
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_millis())
-            .unwrap_or_default();
+        let timestamp_str = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f").to_string();
 
         if let Ok(mut file) = self.file.lock() {
             let _ = writeln!(
                 file,
                 "{} {:?} {} [{}] {}",
-                timestamp,
+                timestamp_str,
                 std::thread::current().id(),
                 record.level(),
                 record.target(),

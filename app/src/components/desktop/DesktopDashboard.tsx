@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event';
 import { toast } from 'sonner';
 
 import { TelegramFile, TelegramFolder, BandwidthStats } from '../../types';
-import { formatBytes, isMediaFile, isPdfFile, isImageFile, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isPdfFile, isExecutableFile, copyToClipboard } from '../../utils';
 
 // Components
 import { Sidebar } from './dashboard/Sidebar';
@@ -693,7 +693,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 folderId,
                 newName,
             });
-            queryClient.invalidateQueries({ queryKey: ['files', folderId] });
+            queryClient.invalidateQueries({ queryKey: ['files'] });
             toast.success(`Renamed to "${newName}"`);
         } catch (e) {
             toast.error(`Failed to rename: ${e}`);
@@ -852,11 +852,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
         setPreviewContextFiles(contextFiles);
         setPreviewContextIndex(contextIndex);
 
+        const isExecutable = isExecutableFile(file.name, file.mime_type);
         const isMedia = isMediaFile(file.name, file.mime_type);
         const isPdf = isPdfFile(file.name, file.mime_type);
-        const isImage = isImageFile(file.name, file.mime_type);
 
-        if (isMedia) {
+        if (isExecutable) {
+            setPreviewFile(file);
+            setPlayingFile(null);
+            setPdfFile(null);
+        } else if (isMedia) {
             setPlayingFile(file);
             setPreviewFile(null);
             setPdfFile(null);
@@ -864,16 +868,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             setPdfFile(file);
             setPreviewFile(null);
             setPlayingFile(null);
-        } else if (isImage) {
+        } else {
             setPreviewFile(file);
             setPlayingFile(null);
             setPdfFile(null);
-        } else {
-            setPreviewFile(null);
-            setPlayingFile(null);
-            setPdfFile(null);
-            const ext = file.name.includes('.') ? `.${file.name.split('.').pop()}` : '';
-            toast.info(`Preview is not supported for ${ext || 'this file type'}. Download the file to view it.`);
         }
     };
 
@@ -892,11 +890,15 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
 
         setPreviewContextIndex(nextIndex);
 
+        const isExecutable = isExecutableFile(nextFile.name, nextFile.mime_type);
         const isMedia = isMediaFile(nextFile.name, nextFile.mime_type);
         const isPdf = isPdfFile(nextFile.name, nextFile.mime_type);
-        const isImage = isImageFile(nextFile.name, nextFile.mime_type);
 
-        if (isMedia) {
+        if (isExecutable) {
+            setPreviewFile(nextFile);
+            setPlayingFile(null);
+            setPdfFile(null);
+        } else if (isMedia) {
             setPlayingFile(nextFile);
             setPreviewFile(null);
             setPdfFile(null);
@@ -904,16 +906,10 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
             setPdfFile(nextFile);
             setPreviewFile(null);
             setPlayingFile(null);
-        } else if (isImage) {
+        } else {
             setPreviewFile(nextFile);
             setPlayingFile(null);
             setPdfFile(null);
-        } else {
-            setPreviewFile(null);
-            setPlayingFile(null);
-            setPdfFile(null);
-            const ext = nextFile.name.includes('.') ? `.${nextFile.name.split('.').pop()}` : '';
-            toast.info(`Preview is not supported for ${ext || 'this file type'}. Download the file to view it.`);
         }
     }, [previewContextFiles, previewFile, playingFile, pdfFile]);
 

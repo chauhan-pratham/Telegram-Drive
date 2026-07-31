@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, CheckCircle2, Download, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, AlertTriangle, CheckCircle2, Download, Trash2, X, Film, Music } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -225,68 +225,77 @@ export function MediaPlayer({ file, onClose, onNext, onPrev, currentIndex, total
     return (
         <div className={`fixed inset-0 z-[200] bg-black/95 animate-in fade-in duration-200 flex flex-col backdrop-blur-md`} onClick={onClose}>
 
-            {/* Full-width Top Header Bar — matches PreviewModal & PdfViewer */}
+            {/* Top Toolbar — unified across all file viewers */}
             <div
-                className={`w-full flex items-center justify-between px-4 py-3 bg-black/90 text-white z-50 border-b border-white/10 shrink-0 ${isFullscreen ? 'absolute top-0 left-0 right-0 transition-opacity duration-300' : ''}`}
+                className={`w-full flex items-center justify-between px-4 py-2.5 bg-[#161619] border-b border-white/10 shrink-0 shadow-lg text-white z-50 ${isFullscreen ? 'absolute top-0 left-0 right-0 transition-opacity duration-300' : ''}`}
                 onClick={e => e.stopPropagation()}
             >
-                {/* Left: Back button + Filename + subtitle */}
-                <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+                {/* Left File Title & Icon */}
+                <div className="flex items-center gap-3 min-w-0 flex-1">
                     <button
                         onClick={onClose}
-                        className="p-1.5 rounded-full hover:bg-white/10 text-white cursor-pointer transition active:scale-95 shrink-0"
-                        title="Back (Esc)"
+                        className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer"
+                        title="Close preview (Esc)"
                     >
-                        <ArrowLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+                        <X className="w-5 h-5" />
                     </button>
-                    <div className="min-w-0 flex-1">
-                        <h2 className="text-sm sm:text-base font-semibold text-white truncate tracking-tight">{file.name}</h2>
-                        <p className="text-[11px] text-white/60 truncate flex items-center gap-1.5">
-                            {isOfflineFile ? (
-                                <span className="inline-flex items-center gap-1 text-emerald-400 font-medium">
-                                    <CheckCircle2 className="w-3 h-3" /> Playing from Offline Storage (0% Internet)
-                                </span>
-                            ) : (
-                                <span>Streaming from Telegram Drive</span>
-                            )}
-                            {typeof currentIndex === 'number' && typeof totalItems === 'number' && totalItems > 0 && (
-                                <span className="ml-1">• {currentIndex + 1}/{totalItems}</span>
-                            )}
-                        </p>
+
+                    <div className="flex items-center gap-2 min-w-0">
+                        {isVideo ? (
+                            <Film className="w-5 h-5 text-blue-400 shrink-0" />
+                        ) : (
+                            <Music className="w-5 h-5 text-emerald-400 shrink-0" />
+                        )}
+                        <h2 className="text-sm font-semibold truncate text-white" title={file.name}>
+                            {file.name}
+                        </h2>
                     </div>
+
+                    {totalItems && totalItems > 1 && currentIndex !== undefined && (
+                        <span className="text-xs text-telegram-subtext hidden sm:inline-block ml-1">
+                            ({currentIndex + 1} of {totalItems})
+                        </span>
+                    )}
+
+                    {isOfflineFile && (
+                        <span className="hidden md:inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            <CheckCircle2 className="w-3 h-3" /> Offline Storage
+                        </span>
+                    )}
                 </div>
 
-                {/* Right: Action buttons */}
+                {/* Right Tools & Actions */}
                 <div className="flex items-center gap-2 shrink-0">
                     {onDownload && (
                         <button
                             onClick={() => onDownload(file)}
-                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all cursor-pointer"
-                            title="Download"
+                            className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer"
+                            title="Download File"
                         >
-                            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <Download className="w-5 h-5" />
                         </button>
                     )}
+
                     {isVideo && (
                         <button
                             onClick={handleOpenNative}
                             disabled={downloadingNative}
-                            className="p-2 text-white/80 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all disabled:opacity-50 cursor-pointer"
+                            className="p-1.5 rounded-lg hover:bg-white/10 text-telegram-subtext hover:text-white transition disabled:opacity-50 cursor-pointer"
                             title="Open in System Player"
                         >
-                            <ExternalLink className="w-4 h-4 sm:w-5 sm:h-5" />
-                        </button>
-                    )}
-                    {onDelete && (
-                        <button
-                            onClick={() => { onDelete(file); onClose(); }}
-                            className="p-2 text-red-400 hover:text-red-300 bg-white/10 hover:bg-red-500/20 rounded-full transition-all cursor-pointer"
-                            title="Delete File"
-                        >
-                            <Trash2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                            <ExternalLink className="w-5 h-5" />
                         </button>
                     )}
 
+                    {onDelete && (
+                        <button
+                            onClick={() => { onDelete(file); onClose(); }}
+                            className="p-1.5 rounded-lg hover:bg-red-500/20 text-red-400 transition cursor-pointer"
+                            title="Delete File"
+                        >
+                            <Trash2 className="w-5 h-5" />
+                        </button>
+                    )}
                 </div>
             </div>
 

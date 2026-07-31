@@ -11,6 +11,22 @@ use tokio::sync::RwLock;
 /// - `folder_id == None` → returns the user's own peer (Saved Messages)
 /// - Cache hit → returns immediately without any network call
 /// - Cache miss → scans all dialogs, populates the cache, and returns
+pub fn normalize_peer_id(id: i64) -> i64 {
+    let abs_id = id.abs();
+    let s = abs_id.to_string();
+    if s.starts_with("100") && s.len() > 3 {
+        if let Ok(bare) = s[3..].parse::<i64>() {
+            return bare;
+        }
+    }
+    abs_id
+}
+
+/// Resolve a folder_id to a Telegram PeerRef, using the cache for O(1) lookups.
+///
+/// - `folder_id == None` → returns the user's own peer (Saved Messages)
+/// - Cache hit → returns immediately without any network call
+/// - Cache miss → scans all dialogs, populates the cache, and returns
 pub async fn resolve_peer(
     client: &Client,
     folder_id: Option<i64>,
@@ -23,40 +39,43 @@ pub async fn resolve_peer(
     };
 
     if let Some(fid) = folder_id {
-        // Fast path: check cache
+        let norm_fid = normalize_peer_id(fid);
+
+        // Fast path: check cache for exact or normalized match
         {
             let cache = peer_cache.read().await;
-            if let Some(peer_ref) = cache.get(&fid) {
-                return Ok(*peer_ref);
+            for (&k, &peer_ref) in cache.iter() {
+                if k == fid || k == norm_fid || normalize_peer_id(k) == norm_fid {
+                    log::info!("[RESOLVE_PEER] Cache hit for fid={} (matched key={})", fid, k);
+                    return Ok(peer_ref);
+                }
             }
         }
 
         // Slow path: scan dialogs and populate cache
-        log::debug!("Peer cache miss for folder_id={}, scanning dialogs...", fid);
+        log::info!("[RESOLVE_PEER] Cache miss for folder_id={} (norm={}), scanning dialogs...", fid, norm_fid);
         let mut found: Option<PeerRef> = None;
         let mut dialogs = client.iter_dialogs();
         let mut discovered = HashMap::new();
         while let Some(dialog) = dialogs.next().await.map_err(|e| e.to_string())? {
             let peer = &dialog.peer;
-            // Get the numeric ID for this peer
             let peer_id = match peer {
                 grammers_client::peer::Peer::Channel(c) => Some(c.raw.id),
                 grammers_client::peer::Peer::User(u) => Some(u.raw.id()),
-                grammers_client::peer::Peer::Group(g) => {
-                    // Use the Group's id() method which returns PeerId
-                    g.id().bare_id()
-                },
-                grammers_client::peer::Peer::Community(comm) => {
-                    comm.id().bare_id()
-                },
+                grammers_client::peer::Peer::Group(g) => g.id().bare_id(),
+                grammers_client::peer::Peer::Community(comm) => comm.id().bare_id(),
             };
             if let Some(id) = peer_id {
-                // Resolve the peer to a PeerRef
                 if let Ok(Some(peer_ref)) = peer.to_ref().await {
+                    let norm_id = normalize_peer_id(id);
                     discovered.insert(id, peer_ref);
-                    if id == fid {
+                    discovered.insert(norm_id, peer_ref);
+                    discovered.insert(-id, peer_ref);
+
+                    log::info!("[RESOLVE_PEER] Scanned dialog bare_id={}, norm_id={}", id, norm_id);
+
+                    if id == fid || id == norm_fid || norm_id == norm_fid {
                         found = Some(peer_ref);
-                        // Don't break — keep scanning to warm the cache
                     }
                 }
             }

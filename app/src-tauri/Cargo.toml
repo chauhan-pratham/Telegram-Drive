@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "2.0.0"
+version = "2.0.1"
 description = "Turn your Telegram account into an unlimited, ad-free, secure cloud storage drive. A high-performance desktop app built with Tauri v2, Rust, and React."
 authors = ["chauhan-pratham"]
 edition = "2021"

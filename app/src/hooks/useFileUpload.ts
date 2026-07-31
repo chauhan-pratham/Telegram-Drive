@@ -66,12 +66,16 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
         store.set('uploadQueue', pending).then(() => store.save());
     }, [store, uploadQueue, initialized]);
 
+    const processingIdsRef = useRef<Set<string>>(new Set());
+
     // Process up to maxConcurrentUploads in parallel
     useEffect(() => {
         const maxConcurrent = settings.maxConcurrentUploads || 1;
         const available = maxConcurrent - activeCountRef.current;
         if (available <= 0) return;
-        const pendingItems = uploadQueue.filter(i => i.status === 'pending').slice(0, available);
+        const pendingItems = uploadQueue
+            .filter(i => i.status === 'pending' && !processingIdsRef.current.has(i.id))
+            .slice(0, available);
         for (const item of pendingItems) {
             processItem(item);
         }
@@ -101,6 +105,9 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
     };
 
     const processItem = async (item: QueueItem) => {
+        if (processingIdsRef.current.has(item.id)) return;
+        processingIdsRef.current.add(item.id);
+
         activeCountRef.current++;
         setUploadQueue(q => q.map(i => i.id === item.id ? { ...i, status: 'uploading', progress: 0 } : i));
         try {
@@ -140,20 +147,50 @@ export function useFileUpload(activeFolderId: number | null, store: Store | null
             await cleanupTempZip(item);
         } finally {
             activeCountRef.current--;
+            processingIdsRef.current.delete(item.id);
         }
     };
 
-    /** Queues a set of file paths for upload */
+    /** Queues a set of file paths for upload with strict normalized path deduplication */
     const queueFiles = (paths: string[]) => {
         if (!paths || paths.length === 0) return;
-        const newItems: QueueItem[] = paths.map((path: string) => ({
-            id: Math.random().toString(36).substr(2, 9),
-            path,
-            folderId: activeFolderId,
-            status: 'pending' as const,
-        }));
-        setUploadQueue(prev => [...prev, ...newItems]);
-        toast.info(`Queued ${paths.length} file${paths.length !== 1 ? 's' : ''} for upload`);
+
+        const normalizePath = (p: string) => p.trim().replace(/\\/g, '/').replace(/^file:\/\/\/?/i, '').toLowerCase();
+
+        setUploadQueue(prev => {
+            const existingNormalized = new Set(
+                prev
+                    .filter(item => item.status === 'pending' || item.status === 'uploading')
+                    .map(item => normalizePath(item.path))
+            );
+
+            const seenNew = new Set<string>();
+            const filteredPaths: string[] = [];
+
+            for (const p of paths) {
+                if (!p) continue;
+                const norm = normalizePath(p);
+                if (!existingNormalized.has(norm) && !seenNew.has(norm)) {
+                    seenNew.add(norm);
+                    filteredPaths.push(p);
+                }
+            }
+
+            if (filteredPaths.length === 0) {
+                console.log('[useFileUpload] Ignored duplicate file queue request for already queued paths:', paths);
+                return prev;
+            }
+
+            const newItems: QueueItem[] = filteredPaths.map((path: string) => ({
+                id: Math.random().toString(36).substr(2, 9),
+                path,
+                folderId: activeFolderId,
+                status: 'pending' as const,
+            }));
+
+            toast.info(`Queued ${filteredPaths.length} file${filteredPaths.length !== 1 ? 's' : ''} for upload`);
+            return [...prev, ...newItems];
+        });
     };
 
     const handleManualUpload = async () => {

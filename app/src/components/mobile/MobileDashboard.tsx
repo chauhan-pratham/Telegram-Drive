@@ -18,7 +18,7 @@ import { useTelegramConnection } from '../../hooks/useTelegramConnection';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { useFileDownload } from '../../hooks/useFileDownload';
 import { useFileOperations } from '../../hooks/useFileOperations';
-import { formatBytes, isMediaFile, isPdfFile, isImageFile, copyToClipboard } from '../../utils';
+import { formatBytes, isMediaFile, isPdfFile, isImageFile, isExecutableFile, copyToClipboard } from '../../utils';
 import { MediaPlayer } from '../desktop/dashboard/MediaPlayer';
 import { PdfViewer } from '../desktop/dashboard/PdfViewer';
 import { PreviewModal } from '../desktop/dashboard/PreviewModal';
@@ -550,14 +550,14 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
   const handlePreview = useCallback((file: TelegramFile) => {
     markFileOpened(file.id);
-    if (isMediaFile(file.name, file.mime_type)) {
+    if (isExecutableFile(file.name, file.mime_type)) {
+      setPreviewFile(file);
+    } else if (isMediaFile(file.name, file.mime_type)) {
       setPlayingFile(file);
     } else if (isPdfFile(file.name, file.mime_type)) {
       setPdfFile(file);
-    } else if (isImageFile(file.name, file.mime_type)) {
-      setPreviewFile(file);
     } else {
-      toast.info(`Preview not supported for ${file.name}`);
+      setPreviewFile(file);
     }
   }, [markFileOpened]);
 
@@ -2923,13 +2923,23 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
       {renameFile && (
         <RenameFileSheet
           fileName={renameFile.currentName}
-          onRename={(newName) => {
-            setFileRenames(prev => {
-              const next = new Map(prev);
-              next.set(renameFile.id, newName);
-              return next;
-            });
-            toast.success(`Renamed to "${newName}"`);
+          onRename={async (newName) => {
+            try {
+              await invoke('cmd_rename_file', {
+                messageId: renameFile.id,
+                folderId: activeFolderId,
+                newName,
+              });
+              setFileRenames(prev => {
+                const next = new Map(prev);
+                next.set(renameFile.id, newName);
+                return next;
+              });
+              queryClient.invalidateQueries({ queryKey: ['files'] });
+              toast.success(`Renamed to "${newName}"`);
+            } catch (err: any) {
+              toast.error(`Failed to rename: ${err?.message || err}`);
+            }
           }}
           onClose={() => setRenameFile(null)}
         />
@@ -3229,7 +3239,26 @@ function RenameFileSheet({
   onRename: (newName: string) => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState(fileName);
+  const { basename, extension } = useMemo(() => {
+    const lastDotIndex = fileName.lastIndexOf('.');
+    if (lastDotIndex > 0) {
+      return {
+        basename: fileName.substring(0, lastDotIndex),
+        extension: fileName.substring(lastDotIndex)
+      };
+    }
+    return { basename: fileName, extension: '' };
+  }, [fileName]);
+
+  const [name, setName] = useState(basename);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [fileName]);
 
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
@@ -3244,18 +3273,28 @@ function RenameFileSheet({
 
         <form onSubmit={(e) => {
           e.preventDefault();
-          if (name.trim() && name.trim() !== fileName) {
-            onRename(name.trim());
+          const trimmed = name.trim();
+          const finalName = trimmed + extension;
+          if (trimmed && finalName !== fileName) {
+            onRename(finalName);
           }
           onClose();
         }}>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-4 py-3 bg-telegram-bg border border-telegram-border/40 rounded-xl text-telegram-text text-sm focus:outline-none focus:border-telegram-primary transition-all mb-6"
-            autoFocus
-          />
+          <div className="flex items-center w-full bg-telegram-bg border border-telegram-border/40 rounded-xl overflow-hidden focus-within:border-telegram-primary transition-all mb-6">
+            <input
+              ref={inputRef}
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="flex-1 px-4 py-3 bg-transparent text-telegram-text text-sm focus:outline-none"
+              placeholder="File name"
+            />
+            {extension && (
+              <span className="px-3.5 py-3 bg-white/5 border-l border-telegram-border/30 text-xs font-mono font-semibold text-telegram-subtext select-none shrink-0">
+                {extension}
+              </span>
+            )}
+          </div>
 
           <div className="flex items-center gap-3">
             <button
@@ -3267,7 +3306,7 @@ function RenameFileSheet({
             </button>
             <button
               type="submit"
-              disabled={!name.trim() || name.trim() === fileName}
+              disabled={!name.trim() || (name.trim() + extension) === fileName}
               className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 disabled:opacity-50 text-black font-bold rounded-xl text-sm transition-all shadow-lg"
             >
               Rename

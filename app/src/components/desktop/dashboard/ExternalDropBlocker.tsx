@@ -2,16 +2,14 @@ import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, CheckCircle2 } from 'lucide-react';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { DragDropOverlay } from './DragDropOverlay';
 
 /**
  * ExternalDropBlocker - Intercepts external file drops and triggers uploads directly.
  * 
- * With Tauri's dragDropEnabled: false, we handle DOM drag events ourselves.
- * On drop, file paths are extracted from File objects (Tauri webviews expose .path)
- * and passed to the onFilesDropped callback for direct upload queueing.
- * 
- * Falls back to showing the Upload dialog prompt only if file paths cannot be extracted.
+ * Listens to native Tauri webview dragDropEvents (which provide full OS file paths)
+ * as well as DOM drag/drop events. Passes extracted paths to onFilesDropped callback.
  */
 export function ExternalDropBlocker({ onFilesDropped, onUploadClick }: { onFilesDropped?: (paths: string[]) => void; onUploadClick?: () => void }) {
     const [isDragging, setIsDragging] = useState(false);
@@ -22,41 +20,94 @@ export function ExternalDropBlocker({ onFilesDropped, onUploadClick }: { onFiles
     const onFilesDroppedRef = useRef(onFilesDropped);
     onFilesDroppedRef.current = onFilesDropped;
 
-    // Listen for file-dropped events emitted from Rust on_navigation handler.
-    // This catches file drops on Linux window managers that bypass DOM drag events
-    // and instead pass files as application-level file-open events.
+    const messageTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const lastDropTimeRef = useRef<number>(0);
+    const lastDropFingerprintRef = useRef<string>('');
+
+    const normalizePath = (p: string) => p.trim().replace(/\\/g, '/').replace(/^file:\/\/\/?/i, '').toLowerCase();
+
+    // Central deduplicated file drop handler
+    const dispatchDroppedFiles = (paths: string[]) => {
+        if (!paths || paths.length === 0) return;
+        
+        const normalizedPaths = paths.map(normalizePath).filter(Boolean);
+        const fingerprint = normalizedPaths.slice().sort().join('|');
+        const now = Date.now();
+
+        // Suppress duplicate drop events arriving within 3000ms
+        if (fingerprint === lastDropFingerprintRef.current && (now - lastDropTimeRef.current) < 3000) {
+            console.log('[ExternalDropBlocker] Suppressed duplicate drop event for:', fingerprint);
+            return;
+        }
+
+        lastDropTimeRef.current = now;
+        lastDropFingerprintRef.current = fingerprint;
+
+        if (onFilesDroppedRef.current) {
+            onFilesDroppedRef.current(paths);
+            setDroppedCount(paths.length);
+            if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
+            messageTimeoutRef.current = setTimeout(() => setDroppedCount(null), 2500);
+        }
+    };
+
+    // Listen for native Tauri drag-drop events (provides OS absolute paths for files and folders)
     useEffect(() => {
         let unlisten: UnlistenFn | undefined;
-        let messageTimeout: ReturnType<typeof setTimeout>;
+
+        (async () => {
+            try {
+                const webview = getCurrentWebview();
+                unlisten = await webview.onDragDropEvent((event) => {
+                    const payload = event.payload as any;
+                    if (payload.type === 'enter' || payload.type === 'over') {
+                        setIsDragging(true);
+                    } else if (payload.type === 'drop') {
+                        setIsDragging(false);
+                        const paths = payload.paths;
+                        if (paths && Array.isArray(paths) && paths.length > 0) {
+                            dispatchDroppedFiles(paths);
+                        }
+                    } else {
+                        setIsDragging(false);
+                    }
+                });
+            } catch (e) {
+                console.warn('[ExternalDropBlocker] Native onDragDropEvent setup error:', e);
+            }
+        })();
+
+        return () => {
+            if (unlisten) unlisten();
+        };
+    }, []);
+
+    // Listen for file-dropped events emitted from Rust on_navigation handler
+    useEffect(() => {
+        let unlisten: UnlistenFn | undefined;
 
         (async () => {
             try {
                 unlisten = await listen<string>('file-dropped', (event) => {
                     const path = event.payload;
                     if (path && typeof path === 'string' && path.length > 0) {
-                        onFilesDroppedRef.current?.([path]);
-                        // Show the same visual confirmation as DOM-based drops
-                        clearTimeout(messageTimeout);
-                        setDroppedCount(1);
-                        messageTimeout = setTimeout(() => setDroppedCount(null), 2000);
+                        dispatchDroppedFiles([path]);
                     }
                 });
             } catch (e) {
-                // listen() throws only if the event name is invalid — shouldn't happen
                 console.warn('[ExternalDropBlocker] Failed to listen for file-dropped event:', e);
             }
         })();
 
         return () => {
             if (unlisten) unlisten();
-            clearTimeout(messageTimeout);
         };
     }, []);
 
+    // DOM Drag & Drop Fallback
     useEffect(() => {
         let dragEnterCount = 0;
         let hideTimeout: ReturnType<typeof setTimeout>;
-        let messageTimeout: ReturnType<typeof setTimeout>;
 
         const handleDragEnter = (e: DragEvent) => {
             if (e.dataTransfer?.types.includes('Files')) {
@@ -80,7 +131,6 @@ export function ExternalDropBlocker({ onFilesDropped, onUploadClick }: { onFiles
         const handleDragLeave = (e: DragEvent) => {
             if (e.dataTransfer?.types.includes('Files')) {
                 dragEnterCount--;
-                // Only hide when truly leaving the window
                 if (dragEnterCount <= 0 &&
                     (e.clientX <= 0 || e.clientY <= 0 ||
                      e.clientX >= window.innerWidth || e.clientY >= window.innerHeight)) {
@@ -100,31 +150,22 @@ export function ExternalDropBlocker({ onFilesDropped, onUploadClick }: { onFiles
             dragEnterCount = 0;
             setIsDragging(false);
             clearTimeout(hideTimeout);
-            clearTimeout(messageTimeout);
 
             const files = e.dataTransfer.files;
             const paths: string[] = [];
 
             for (let i = 0; i < files.length; i++) {
-                // In Tauri webviews, File objects expose a non-standard .path property
                 const path = (files[i] as any).path as string | undefined;
                 if (path && typeof path === 'string' && path.length > 0) {
                     paths.push(path);
                 }
             }
 
-            if (paths.length > 0 && onFilesDroppedRef.current) {
-                onFilesDroppedRef.current(paths);
-                setDroppedCount(paths.length);
-                messageTimeout = setTimeout(() => setDroppedCount(null), 2000);
-            } else {
-                // Fallback: file paths not available (e.g., non-Tauri browser during dev)
-                setShowFallback(true);
-                messageTimeout = setTimeout(() => setShowFallback(false), 4000);
+            if (paths.length > 0) {
+                dispatchDroppedFiles(paths);
             }
         };
 
-        // Capture phase ensures we intercept before the webview's default handler
         document.addEventListener('dragenter', handleDragEnter, true);
         document.addEventListener('dragover', handleDragOver, true);
         document.addEventListener('dragleave', handleDragLeave, true);
@@ -136,7 +177,7 @@ export function ExternalDropBlocker({ onFilesDropped, onUploadClick }: { onFiles
             document.removeEventListener('dragleave', handleDragLeave, true);
             document.removeEventListener('drop', handleDrop, true);
             clearTimeout(hideTimeout);
-            clearTimeout(messageTimeout);
+            if (messageTimeoutRef.current) clearTimeout(messageTimeoutRef.current);
         };
     }, []);
 

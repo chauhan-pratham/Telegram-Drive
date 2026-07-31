@@ -1047,10 +1047,24 @@ async fn cmd_upload_file_inner(
         bw_state.release_up(size);
         e
     })?;
-    let file_name = std::path::Path::new(&path)
+    let mut file_name = std::path::Path::new(&path)
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".to_string());
+
+    if !file_name.contains('.') {
+        if let Ok(mut f) = tokio::fs::File::open(&path).await {
+            use tokio::io::AsyncReadExt;
+            let mut buf = [0u8; 1024];
+            if let Ok(n) = f.read(&mut buf).await {
+                let (_, detected_ext) = infer_mime_and_ext_from_bytes(&buf[..n], &file_name);
+                if !detected_ext.is_empty() {
+                    file_name = format!("{}.{}", file_name, detected_ext);
+                    log::info!("Inferred extension for extensionless file during upload: {}", file_name);
+                }
+            }
+        }
+    }
 
     // Spawn a progress reporter task that emits events every 250ms
     let cancelled = state.cancelled_transfers.clone();
@@ -1232,20 +1246,56 @@ pub async fn cmd_rename_file(
 
     let peer = resolve_peer(&client, folder_id, &state.peer_cache).await?;
 
-    // Verify the message exists before attempting to edit it.
-    // This avoids a cryptic MESSAGE_ID_INVALID RPC error when the message
-    // was moved (forwarded → new ID) or deleted since the file list was loaded.
     let messages = client.get_messages_by_id(peer, &[message_id])
         .await
         .map_err(|e| format!("Failed to fetch message for rename: {}", e))?;
-    if messages.iter().flatten().next().is_none() {
-        return Err(format!(
+    let message = messages.into_iter().flatten().next().ok_or_else(|| {
+        format!(
             "Message {} not found in folder {:?}. The file may have been moved or deleted. Please refresh the folder.",
             message_id, folder_id
-        ));
-    }
+        )
+    })?;
 
     let input_peer = tl::enums::InputPeer::from(peer);
+
+    // Preserve original media reference (Document/Photo) so Telegram updates the caption text cleanly
+    let input_media = match &message.raw {
+        tl::enums::Message::Message(m) => match &m.media {
+            Some(tl::enums::MessageMedia::Document(doc_media)) => {
+                if let Some(tl::enums::Document::Document(doc)) = &doc_media.document {
+                    Some(tl::enums::InputMedia::Document(tl::types::InputMediaDocument {
+                        id: tl::enums::InputDocument::Document(tl::types::InputDocument {
+                            id: doc.id,
+                            access_hash: doc.access_hash,
+                            file_reference: doc.file_reference.clone(),
+                        }),
+                        ttl_seconds: None,
+                        query: None,
+                        spoiler: false,
+                        video_cover: None,
+                        video_timestamp: None,
+                    }))
+                } else { None }
+            }
+            Some(tl::enums::MessageMedia::Photo(photo_media)) => {
+                if let Some(tl::enums::Photo::Photo(photo)) = &photo_media.photo {
+                    Some(tl::enums::InputMedia::Photo(tl::types::InputMediaPhoto {
+                        id: tl::enums::InputPhoto::Photo(tl::types::InputPhoto {
+                            id: photo.id,
+                            access_hash: photo.access_hash,
+                            file_reference: photo.file_reference.clone(),
+                        }),
+                        ttl_seconds: None,
+                        live_photo: false,
+                        spoiler: false,
+                        video: None,
+                    }))
+                } else { None }
+            }
+            _ => None,
+        },
+        _ => None,
+    };
 
     client.invoke(&tl::functions::messages::EditMessage {
         peer: input_peer,
@@ -1253,7 +1303,7 @@ pub async fn cmd_rename_file(
         no_webpage: false,
         invert_media: false,
         message: Some(new_name),
-        media: None,
+        media: input_media,
         reply_markup: None,
         entities: None,
         schedule_date: None,
@@ -1752,7 +1802,7 @@ pub async fn cmd_get_files(
                         Some(std::matches!(doc, tl::enums::Document::Document(ref inner) if inner.attributes.iter().any(|a| std::matches!(a, tl::enums::DocumentAttribute::Audio(_)))))
                     }).unwrap_or(false);
 
-                    let (final_mime, final_ext) = if has_video_attr {
+                    let (final_mime, mut final_ext) = if has_video_attr {
                         let ext = e.clone().filter(|ext| !ext.is_empty()).or_else(|| Some("mp4".into()));
                         let mime = m.clone().filter(|m| !m.starts_with("application/")).or_else(|| Some("video/mp4".into()));
                         (mime, ext)
@@ -1763,6 +1813,30 @@ pub async fn cmd_get_files(
                     } else {
                         (m, e)
                     };
+
+                    if final_ext.as_ref().map_or(true, |ext| ext.is_empty()) {
+                        if let Some(ref mime) = final_mime {
+                            let inferred = match mime.to_lowercase().as_str() {
+                                "image/jpeg" => Some("jpg".to_string()),
+                                "image/png" => Some("png".to_string()),
+                                "image/gif" => Some("gif".to_string()),
+                                "image/webp" => Some("webp".to_string()),
+                                "application/pdf" => Some("pdf".to_string()),
+                                "video/mp4" => Some("mp4".to_string()),
+                                "video/webm" => Some("webm".to_string()),
+                                "video/x-matroska" => Some("mkv".to_string()),
+                                "audio/mpeg" | "audio/mp3" => Some("mp3".to_string()),
+                                "audio/wav" => Some("wav".to_string()),
+                                "audio/flac" => Some("flac".to_string()),
+                                "text/plain" => Some("txt".to_string()),
+                                "application/zip" => Some("zip".to_string()),
+                                _ => None,
+                            };
+                            if inferred.is_some() {
+                                final_ext = inferred;
+                            }
+                        }
+                    }
 
                     let mut final_name = display_name.trim().to_string();
                     if final_name.is_empty() || final_name == "Unknown" {
@@ -1790,7 +1864,16 @@ pub async fn cmd_get_files(
                         .max_by_key(|t| t.size())
                         .map(|t| t.size() as usize)
                         .unwrap_or(0);
-                    let display_name = format!("photo_{}.jpg", msg.id());
+                    let caption = msg.text().trim();
+                    let display_name = if !caption.is_empty() {
+                        if !caption.contains('.') {
+                            format!("{}.jpg", caption)
+                        } else {
+                            caption.to_string()
+                        }
+                    } else {
+                        format!("photo_{}.jpg", msg.id())
+                    };
                     (display_name, photo_size as i64, Some("image/jpeg".into()), Some("jpg".into()))
                 }
                 _ => ("Unknown".to_string(), 0, None, None),
@@ -2722,4 +2805,284 @@ pub async fn cmd_delete_offline_file(
 
     Ok(deleted)
 }
+
+/// Infer MIME type and extension from magic bytes when a file has no extension
+pub fn infer_mime_and_ext_from_bytes(bytes: &[u8], filename: &str) -> (String, String) {
+    let lower_ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if !lower_ext.is_empty() {
+        let mime = match lower_ext.as_str() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "bmp" => "image/bmp",
+            "svg" => "image/svg+xml",
+            "pdf" => "application/pdf",
+            "mp4" => "video/mp4",
+            "mkv" => "video/x-matroska",
+            "webm" => "video/webm",
+            "mov" => "video/quicktime",
+            "avi" => "video/x-msvideo",
+            "mp3" => "audio/mpeg",
+            "wav" => "audio/wav",
+            "flac" => "audio/flac",
+            "m4a" => "audio/m4a",
+            "ogg" => "audio/ogg",
+            "txt" => "text/plain",
+            "json" => "application/json",
+            "html" | "htm" => "text/html",
+            "zip" => "application/zip",
+            "rar" => "application/x-rar-compressed",
+            "7z" => "application/x-7z-compressed",
+            _ => "application/octet-stream",
+        };
+        return (mime.to_string(), lower_ext);
+    }
+
+    // Inspect magic bytes if filename has no extension
+    if bytes.len() >= 3 && bytes[0..3] == [0xFF, 0xD8, 0xFF] {
+        return ("image/jpeg".to_string(), "jpg".to_string());
+    }
+    if bytes.len() >= 8 && bytes[0..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
+        return ("image/png".to_string(), "png".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x47, 0x49, 0x46, 0x38] {
+        return ("image/gif".to_string(), "gif".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x25, 0x50, 0x44, 0x46] {
+        return ("application/pdf".to_string(), "pdf".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x50, 0x4B, 0x03, 0x04] {
+        return ("application/zip".to_string(), "zip".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x52, 0x61, 0x72, 0x21] {
+        return ("application/x-rar-compressed".to_string(), "rar".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x37, 0x7A, 0xBC, 0xAF] {
+        return ("application/x-7z-compressed".to_string(), "7z".to_string());
+    }
+    if bytes.len() >= 4 && bytes[0..4] == [0x1A, 0x45, 0xDF, 0xA3] {
+        return ("video/webm".to_string(), "webm".to_string());
+    }
+    if bytes.len() >= 3 && bytes[0..3] == [0x49, 0x44, 0x33] {
+        return ("audio/mpeg".to_string(), "mp3".to_string());
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return ("image/webp".to_string(), "webp".to_string());
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return ("audio/wav".to_string(), "wav".to_string());
+    }
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"AVI " {
+        return ("video/avi".to_string(), "avi".to_string());
+    }
+    if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" {
+        let brand = &bytes[8..12];
+        if brand == b"M4A " {
+            return ("audio/m4a".to_string(), "m4a".to_string());
+        }
+        return ("video/mp4".to_string(), "mp4".to_string());
+    }
+
+    if !bytes.is_empty() && bytes.iter().take(1024).all(|&b| b == 9 || b == 10 || b == 13 || (b >= 32 && b <= 126)) {
+        return ("text/plain".to_string(), "txt".to_string());
+    }
+
+    ("application/octet-stream".to_string(), "".to_string())
+}
+
+#[tauri::command]
+pub async fn cmd_read_text_file(path: String) -> Result<String, String> {
+    use tokio::io::AsyncReadExt;
+
+    let file = tokio::fs::File::open(&path).await.map_err(|e| format!("Failed to open file at {}: {}", path, e))?;
+    let meta = file.metadata().await.map_err(|e| e.to_string())?;
+    let max_bytes = 10 * 1024 * 1024; // 10 MB limit for text preview safety
+
+    let mut bytes = Vec::new();
+    let mut handle = file.take(max_bytes);
+    handle.read_to_end(&mut bytes).await.map_err(|e| format!("Failed to read file: {}", e))?;
+
+    let mut text = String::from_utf8_lossy(&bytes).to_string();
+    if meta.len() > max_bytes {
+        text.push_str("\n\n--- [TRUNCATED: File exceeds 10 MB preview limit. Use system reader or download file to view complete content.] ---");
+    }
+    Ok(text)
+}
+
+#[derive(serde::Serialize)]
+pub struct FileSecurityResult {
+    pub is_executable: bool,
+    pub detected_type: String,
+    pub reason: Option<String>,
+}
+
+#[tauri::command]
+pub async fn cmd_check_file_security(path: String, mime: Option<String>) -> Result<FileSecurityResult, String> {
+    let path_buf = std::path::PathBuf::from(&path);
+
+    // 1. Check MIME type first
+    if let Some(ref m) = mime {
+        let lower = m.to_lowercase();
+        if lower.contains("x-msdownload") 
+            || lower.contains("x-dosexec") 
+            || lower.contains("x-executable") 
+            || lower.contains("x-msi") 
+            || lower.contains("x-bat") 
+            || lower.contains("x-sh") 
+            || lower.contains("portable-executable") 
+            || lower.contains("application/vnd.android.package-archive") 
+            || lower.contains("application/x-apple-diskimage") {
+            return Ok(FileSecurityResult {
+                is_executable: true,
+                detected_type: "Executable MIME Type".to_string(),
+                reason: Some(format!("MIME type '{}' indicates an executable program", m)),
+            });
+        }
+    }
+
+    // 2. Check Magic Bytes from disk (Header signature)
+    if path_buf.exists() {
+        if let Ok(mut f) = std::fs::File::open(&path_buf) {
+            use std::io::Read;
+            let mut header = [0u8; 4];
+            if let Ok(n) = f.read(&mut header) {
+                if n >= 2 {
+                    // Windows PE Executable (MZ header: 0x4D 0x5A)
+                    if header[0] == b'M' && header[1] == b'Z' {
+                        return Ok(FileSecurityResult {
+                            is_executable: true,
+                            detected_type: "Windows Binary (MZ Header)".to_string(),
+                            reason: Some("File binary header (MZ) indicates a Windows executable program.".to_string()),
+                        });
+                    }
+                    // Linux ELF binary (\x7FELF)
+                    if n >= 4 && header == [0x7F, b'E', b'L', b'F'] {
+                        return Ok(FileSecurityResult {
+                            is_executable: true,
+                            detected_type: "Linux Binary (ELF Header)".to_string(),
+                            reason: Some("File binary header (ELF) indicates a Linux binary program.".to_string()),
+                        });
+                    }
+                    // macOS Mach-O binary
+                    if n >= 4 && (header == [0xFE, 0xED, 0xFA, 0xCE] || header == [0xCF, 0xFA, 0xED, 0xFE] || header == [0xCA, 0xFE, 0xBA, 0xBE]) {
+                        return Ok(FileSecurityResult {
+                            is_executable: true,
+                            detected_type: "macOS Binary (Mach-O Header)".to_string(),
+                            reason: Some("File binary header indicates a macOS binary program.".to_string()),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Fallback Extension check
+    let lower_ext = path_buf.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let dangerous_exts = ["exe", "msi", "scr", "bat", "cmd", "ps1", "vbs", "vbe", "cpl", "com", "hta", "jar", "apk", "app", "dmg", "pkg", "sh"];
+    if dangerous_exts.contains(&lower_ext.as_str()) {
+        return Ok(FileSecurityResult {
+            is_executable: true,
+            detected_type: "Executable Extension".to_string(),
+            reason: Some(format!("Extension '.{}' is a known executable script or installer.", lower_ext)),
+        });
+    }
+
+    Ok(FileSecurityResult {
+        is_executable: false,
+        detected_type: lower_ext.to_uppercase(),
+        reason: None,
+    })
+}
+
+#[tauri::command]
+pub async fn cmd_extract_office_text(path: String) -> Result<Vec<String>, String> {
+    let file = std::fs::File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
+    
+    // Attempt zip extraction for DOCX, XLSX, PPTX
+    if let Ok(mut archive) = zip::ZipArchive::new(file) {
+        let mut paragraphs: Vec<String> = Vec::new();
+        
+        for i in 0..archive.len() {
+            if let Ok(mut zip_file) = archive.by_index(i) {
+                let name = zip_file.name().to_lowercase();
+                
+                // Inspect relevant XML files inside DOCX / XLSX / PPTX zip structure
+                if name.ends_with(".xml") && (name.contains("word/") || name.contains("xl/") || name.contains("ppt/")) {
+                    let mut xml_content = String::new();
+                    use std::io::Read;
+                    if zip_file.read_to_string(&mut xml_content).is_ok() {
+                        // Extract text between XML tags like <w:t...>, <a:t...>, <t...>
+                        for chunk in xml_content.split('>') {
+                            let parts: Vec<&str> = chunk.split('<').collect();
+                            if !parts.is_empty() {
+                                let text_node = parts[0].trim();
+                                if !text_node.is_empty() {
+                                    let unescaped = text_node
+                                        .replace("&lt;", "<")
+                                        .replace("&gt;", ">")
+                                        .replace("&amp;", "&")
+                                        .replace("&quot;", "\"")
+                                        .replace("&apos;", "'");
+                                    let trimmed = unescaped.trim();
+                                    if !trimmed.is_empty() && trimmed.len() > 1 && !trimmed.starts_with("<?xml") {
+                                        paragraphs.push(trimmed.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !paragraphs.is_empty() {
+            return Ok(paragraphs);
+        }
+    }
+
+    // Fallback for non-zip binary Office formats or plain text
+    let bytes = tokio::fs::read(&path).await.map_err(|e| e.to_string())?;
+    let raw_text = String::from_utf8_lossy(&bytes);
+    
+    let mut paragraphs: Vec<String> = Vec::new();
+    let mut current = String::new();
+    
+    for c in raw_text.chars() {
+        if c.is_alphanumeric() || c.is_whitespace() || c.is_ascii_punctuation() {
+            if c == '\n' || c == '\r' {
+                let trimmed = current.trim().to_string();
+                if trimmed.len() >= 3 {
+                    paragraphs.push(trimmed);
+                }
+                current.clear();
+            } else {
+                current.push(c);
+            }
+        } else {
+            let trimmed = current.trim().to_string();
+            if trimmed.len() >= 3 {
+                paragraphs.push(trimmed);
+            }
+            current.clear();
+        }
+    }
+    
+    let trimmed = current.trim().to_string();
+    if trimmed.len() >= 3 {
+        paragraphs.push(trimmed);
+    }
+
+    if paragraphs.is_empty() {
+        paragraphs.push("Document contains non-text media or graphics.".to_string());
+    }
+
+    Ok(paragraphs)
+}
+
 

@@ -27,39 +27,90 @@ const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg', 'av
 
 const endsWithAny = (name: string, exts: readonly string[]) => {
     const lower = name.toLowerCase();
-    return exts.some(ext => lower.endsWith(ext));
+    return exts.some(ext => lower.endsWith('.' + ext) || lower.endsWith(ext));
 };
 
 export const isVideoFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     if (endsWithAny(name, VIDEO_EXTENSIONS)) return true;
     if (mime && mime.toLowerCase().startsWith('video/')) return true;
     return false;
 };
 
 export const isAudioFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     if (endsWithAny(name, AUDIO_EXTENSIONS)) return true;
     if (mime && mime.toLowerCase().startsWith('audio/')) return true;
     return false;
 };
 
 export const isMediaFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     return isVideoFile(name, mime) || isAudioFile(name, mime);
 };
 
 export const isImageFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     if (endsWithAny(name, IMAGE_EXTENSIONS)) return true;
+    if (name.toLowerCase().startsWith('photo_') || name.toLowerCase() === 'photo.jpg') return true;
     if (mime && mime.toLowerCase().startsWith('image/')) return true;
-    if (name.toLowerCase() === 'photo.jpg') return true;
     return false;
 };
 
 export const isPdfFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     if (name.toLowerCase().endsWith('.pdf')) return true;
     if (mime && mime.toLowerCase() === 'application/pdf') return true;
     return false;
 };
 
+const TEXT_EXTENSIONS = [
+    'txt', 'text', 'json', 'md', 'markdown', 'log', 'csv', 'tsv',
+    'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'java',
+    'c', 'cpp', 'h', 'hpp', 'rs', 'go', 'sh', 'bat', 'cmd', 'ps1',
+    'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env', 'sql'
+] as const;
+
+export const isTextFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
+    if (endsWithAny(name, TEXT_EXTENSIONS)) return true;
+    if (mime) {
+        const m = mime.toLowerCase();
+        if (m.startsWith('text/') || m === 'application/json' || m === 'application/xml' || m === 'application/javascript') {
+            return true;
+        }
+    }
+    return false;
+};
+
+const OFFICE_EXTENSIONS = [
+    'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+    'odt', 'ods', 'odp', 'rtf', 'pages', 'numbers', 'key'
+] as const;
+
+export const isOfficeFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
+    if (endsWithAny(name, OFFICE_EXTENSIONS)) return true;
+    if (mime) {
+        const m = mime.toLowerCase();
+        if (
+            m.includes('word') ||
+            m.includes('excel') ||
+            m.includes('powerpoint') ||
+            m.includes('officedocument') ||
+            m.includes('opendocument') ||
+            m.includes('msword') ||
+            m.includes('ms-excel') ||
+            m.includes('ms-powerpoint')
+        ) {
+            return true;
+        }
+    }
+    return false;
+};
+
 export const isArchiveFile = (name: string, mime?: string) => {
+    if (isExecutableFile(name, mime)) return false;
     const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz'] as const;
     if (endsWithAny(name, archiveExts)) return true;
     if (mime) {
@@ -75,6 +126,49 @@ export const isArchiveFile = (name: string, mime?: string) => {
             return true;
         }
     }
+    return false;
+};
+
+const EXEC_EXTENSIONS = [
+    // Windows Executables & Installers
+    'exe', 'msi', 'scr', 'cpl', 'com', 'hta', 'gadget', 'msp', 'isu', 'pif',
+    // Windows Scripts & Automation
+    'bat', 'cmd', 'ps1', 'vbs', 'vbe', 'jse', 'wsf', 'wsh', 'reg', 'inf',
+    // Macro-Enabled Documents
+    'docm', 'xlsm', 'pptm', 'dotm', 'xltm',
+    // Android & Java Packages
+    'apk', 'jar', 'dex',
+    // macOS Executables & Installers
+    'app', 'dmg', 'pkg', 'command',
+    // Linux Executables & Shell Scripts
+    'bin', 'run', 'out', 'sh', 'bash', 'zsh'
+] as const;
+
+export const isExecutableFile = (name: string, mime?: string): boolean => {
+    if (mime) {
+        const m = mime.toLowerCase();
+        if (
+            m.includes('x-msdownload') ||
+            m.includes('x-dosexec') ||
+            m.includes('x-executable') ||
+            m.includes('x-msi') ||
+            m.includes('x-bat') ||
+            m.includes('x-sh') ||
+            m.includes('x-apple-diskimage') ||
+            m.includes('application/vnd.android.package-archive') ||
+            m.includes('portable-executable')
+        ) {
+            return true;
+        }
+    }
+    const lowerName = name.toLowerCase();
+    if (endsWithAny(lowerName, EXEC_EXTENSIONS)) return true;
+
+    // Double extension detection (e.g. photo.pdf.exe or invoice.png.vbs)
+    if (/\.(png|jpg|jpeg|pdf|docx|xlsx|txt)\.(exe|bat|vbs|ps1|scr|msi|cmd|com|app|apk|sh)$/i.test(lowerName)) {
+        return true;
+    }
+
     return false;
 };
 
