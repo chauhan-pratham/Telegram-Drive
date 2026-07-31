@@ -37,44 +37,50 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         if (resolveRef) resolveRef(false);
     }, [resolveRef]);
 
-    // Handle Escape key cancellation
+    // Handle Escape and Enter key in modal with capture phase
     useEffect(() => {
         if (!isOpen) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
+                e.stopPropagation();
                 handleCancel();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                e.stopPropagation();
+                handleConfirm();
             }
         };
 
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [isOpen, handleCancel]);
+        window.addEventListener('keydown', handleKeyDown, true);
+        return () => window.removeEventListener('keydown', handleKeyDown, true);
+    }, [isOpen, handleConfirm, handleCancel]);
 
     return (
         <ConfirmContext.Provider value={{ confirm }}>
             {children}
             {isOpen && (
                 <div 
-                    className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50 backdrop-blur-sm cursor-pointer"
+                    className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm cursor-pointer"
                     onClick={handleCancel}
                 >
                     <div 
                         role="dialog"
                         aria-modal="true"
-                        className="bg-[#1c1c1c] border border-white/10 rounded-xl p-6 w-96 shadow-2xl animate-in zoom-in-95 cursor-default" 
+                        className="bg-[#1c1c1c] border border-white/10 rounded-2xl p-6 w-96 shadow-2xl animate-in zoom-in-95 cursor-default select-none" 
                         onClick={e => e.stopPropagation()}
                     >
-                        <h3 className="text-lg font-medium text-white mb-2">{options.title}</h3>
-                        <p className="text-telegram-subtext text-sm mb-6 whitespace-pre-line">{options.message}</p>
+                        <h3 className="text-lg font-bold text-white mb-2">{options.title}</h3>
+                        <p className="text-telegram-subtext text-sm mb-6 whitespace-pre-line leading-relaxed">{options.message}</p>
                         <div className="flex justify-end gap-3">
-                            <button onClick={handleCancel} className="px-4 py-2 rounded-lg text-sm font-medium hover:bg-white/5 text-telegram-subtext transition">
+                            <button onClick={handleCancel} className="px-4 py-2 rounded-xl text-sm font-semibold hover:bg-white/10 text-telegram-subtext hover:text-white transition cursor-pointer">
                                 {options.cancelText || 'Cancel'}
                             </button>
                             <button
+                                autoFocus
                                 onClick={handleConfirm}
-                                className={`px-4 py-2 rounded-lg text-sm font-medium transition ${options.variant === 'danger' ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'bg-telegram-primary text-white hover:bg-telegram-primary/90'}`}
+                                className={`px-4 py-2 rounded-xl text-sm font-bold transition cursor-pointer shadow-md ${options.variant === 'danger' ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-telegram-primary text-black hover:bg-telegram-primary/90'}`}
                             >
                                 {options.confirmText || 'Confirm'}
                             </button>

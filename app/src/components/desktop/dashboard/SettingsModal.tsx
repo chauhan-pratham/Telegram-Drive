@@ -337,9 +337,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
                                                     <button
                                                         onClick={() => updateSetting('proxyEnabled', !settings.proxyEnabled)}
-                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.proxyEnabled ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${settings.proxyEnabled ? 'bg-telegram-primary' : 'bg-slate-300 dark:bg-white/20 border border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                                                     >
-                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.proxyEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow transition-all duration-200 ${settings.proxyEnabled ? 'translate-x-5 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                                                     </button>
                                                 </div>
 
@@ -352,9 +352,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                         </div>
                                                         <button
                                                             onClick={() => updateSetting('proxyLiveStateEnabled', !settings.proxyLiveStateEnabled)}
-                                                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.proxyLiveStateEnabled ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${settings.proxyLiveStateEnabled ? 'bg-telegram-primary' : 'bg-slate-300 dark:bg-white/20 border border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                                                         >
-                                                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.proxyLiveStateEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow transition-all duration-200 ${settings.proxyLiveStateEnabled ? 'translate-x-5 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                                                         </button>
                                                     </div>
                                                 )}
@@ -488,9 +488,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
                                                     <button
                                                         onClick={() => updateSetting('zipFolders', !settings.zipFolders)}
-                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.zipFolders ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${settings.zipFolders ? 'bg-telegram-primary' : 'bg-slate-300 dark:bg-white/20 border border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                                                     >
-                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.zipFolders ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow transition-all duration-200 ${settings.zipFolders ? 'translate-x-5 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                                                     </button>
                                                 </div>
 
@@ -505,9 +505,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                     </div>
                                                     <button
                                                         onClick={() => updateSetting('hideGroups', !settings.hideGroups)}
-                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${settings.hideGroups ? 'bg-telegram-primary' : 'bg-telegram-border'}`}
+                                                        className={`relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer ${settings.hideGroups ? 'bg-telegram-primary' : 'bg-slate-300 dark:bg-white/20 border border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                                                     >
-                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${settings.hideGroups ? 'translate-x-5' : 'translate-x-0'}`} />
+                                                        <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow transition-all duration-200 ${settings.hideGroups ? 'translate-x-5 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                                                     </button>
                                                 </div>
                                             </div>

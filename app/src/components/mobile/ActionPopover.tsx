@@ -32,22 +32,22 @@ export function ActionPopover({ actions = [], onClose, title }: ActionPopoverPro
   return (
     <div
       ref={backdropRef}
-      className="fixed inset-0 z-[200] flex items-end justify-center bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
+      className="fixed inset-0 z-[200] flex items-end justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"
       onClick={(e) => {
         if (e.target === backdropRef.current) onClose();
       }}
     >
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-5 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-5 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Drag handle */}
         <div className="flex justify-center mb-4">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
 
         {title && (
-          <h3 className="text-sm font-bold text-white mb-4 px-1 truncate">{title}</h3>
+          <h3 className="text-sm font-bold text-telegram-text mb-4 px-1 truncate">{title}</h3>
         )}
 
         <div className="space-y-1.5">
@@ -58,10 +58,10 @@ export function ActionPopover({ actions = [], onClose, title }: ActionPopoverPro
                 action.onClick();
                 onClose();
               }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 active:scale-[0.98] ${
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-sm font-semibold transition-all duration-200 active:scale-[0.98] cursor-pointer ${
                 action.destructive
                   ? 'bg-red-500/15 text-red-400 hover:bg-red-500/25 border border-red-500/20'
-                  : 'bg-white/5 text-white hover:bg-white/10 border border-white/5'
+                  : 'bg-telegram-hover/30 text-telegram-text hover:bg-telegram-hover/60 border border-telegram-border/20'
               }`}
             >
               {action.icon && <span className="flex-shrink-0">{action.icon}</span>}
@@ -73,7 +73,7 @@ export function ActionPopover({ actions = [], onClose, title }: ActionPopoverPro
         {/* Cancel button */}
         <button
           onClick={onClose}
-          className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold bg-white/5 text-telegram-subtext hover:bg-white/10 border border-white/5 transition-all duration-200 active:scale-[0.98]"
+          className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-sm font-semibold bg-telegram-hover/20 text-telegram-subtext hover:bg-telegram-hover/40 border border-telegram-border/20 transition-all duration-200 active:scale-[0.98] cursor-pointer"
         >
           <X className="w-4 h-4" />
           Cancel

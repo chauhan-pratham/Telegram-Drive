@@ -25,11 +25,6 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 
 <br />
 
-### 🚀 Remote Upload & Media Ingestion
-![Remote Upload](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/remote-upload.png)
-
-<br />
-
 ### ⚙️ Application Settings & Configuration
 ![Settings](https://raw.githubusercontent.com/chauhan-pratham/Telegram-Drive/main/public/screenshots/settings.png)
 
@@ -37,17 +32,21 @@ Get pre-compiled desktop installers for your operating system directly from GitH
 
 ## ✨ Key Features
 
-* **Unlimited Cloud Storage**: Harnesses Telegram's infrastructure to store, organize, and manage your files and folders.
+* **Unlimited Cloud Storage**: Harnesses Telegram's infrastructure to store, organize, and manage your files and folders with real-time total storage usage tracking.
+* **🗂️ Multi-Tab Organization**: Effortlessly switch between **My Drive**, **Shared with me**, **Recent**, **Starred**, **Offline**, and **Trash** tabs.
 * **⭐ File & Folder Starring**: Easily star/unstar files and folders from the top action bar, context menu, or details panel, and view them instantly in the **Starred** tab.
-* **🎬 Native Media & Video Streaming**: Stream audio and video files directly without full pre-downloads via a secure local Actix streaming proxy. Supports native HTML5 video controls, seeking, and HLS multi-quality transcode caching (`.m3u8`).
+* **🎬 Adaptive HLS Video Streaming & Transcoding**: Stream videos on-the-fly with multi-quality resolution options (360p, 480p, 720p, 1080p, and Original) powered by a local Rust/Actix proxy with HLS caching.
+* **📦 Folder Upload (ZIP) & File Drag-and-Drop**: Upload single/multiple files or compress and upload entire folders directly with live upload/download progress queues.
+* **📱 Responsive Mobile & Touch View**: Adaptive UI with touch-friendly navigation, bottom navigation bar, swipe sheets, and mobile action popovers.
+* **📈 Daily Bandwidth & Storage Analytics**: Integrated sidebar widget displaying real-time daily upload/download bandwidth stats and storage consumption.
 * **📄 Aspect-Ratio Locked PDF Viewer**: Fluid, zero-jitter PDF reader with aspect-ratio container height locks for smooth, fast scrolling without layout collapse.
 * **📁 Smart Folder Metadata & Grid Alignment**: Real-time folder size calculations, item counts (`14.2 MB` / `3 items`), category tags, and pixel-perfect 5-column table alignment with expanded timestamps.
-* **📂 External File Opener**: Open downloaded files directly in your operating system's default desktop applications directly from download toasts or the Download Queue widget.
-* **⌨️ Keyboard & Gesture Navigation**: Quick `Escape` key dismissal for context menus, 3-dots popover toggling, drag-and-drop file organization, and auto-naming fallbacks for unnamed Telegram media (`video_{id}.mp4`).
+* **📂 External File Opener**: Open downloaded files directly in your operating system's default desktop applications from download toasts or the Download Queue widget.
+* **⌨️ Keyboard & Gesture Navigation**: Quick `Escape` key dismissal for modals and context menus, 3-dots popover toggling, drag-and-drop file organization, and auto-naming fallbacks.
 * **📊 Live Activity Audit Feed**: Inspect detailed file metadata, Telegram Message IDs, upload timestamps, storage sizes, and channel mappings in the interactive **Details** panel.
 * **🌐 Proxy & VPN Optimization**: Configurable SOCKS5 / MTProto proxy settings, adjustable chunk sizes, bandwidth limits, and keep-alives for high-latency connections.
 * **🚫 100% Ad-Free**: Completely stripped of all third-party tracking, Adsterra, AdMob scripts, network gateways, and pop-up banners.
-* **🔒 Hardened Security**: Strict Content Security Policy (CSP) blocking remote cross-site script execution and unverified external frames.
+* **🔒 Hardened Security & Safe Environment Builds**: Strict Content Security Policy (CSP) blocking remote cross-site script execution, with custom environment-aware build scripts (`npm run tauri:build`).
 
 ---
 
@@ -88,9 +87,9 @@ You will need your own Telegram API credentials:
    ```
 
 3. **Compile Production Binary:**
-   Generates a production build installer (`.exe` for Windows, `.app`/`.dmg` for macOS, or `.AppImage` for Linux):
+   Generates a production build installer (`.exe` for Windows, `.app`/`.dmg` for macOS, or `.AppImage` for Linux) while automatically loading environment variables from `.env`:
    ```bash
-   npm run tauri build
+   npm run tauri:build
    ```
 
 4. **Security Audit Check:**

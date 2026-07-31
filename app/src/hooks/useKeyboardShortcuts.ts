@@ -52,13 +52,14 @@ export function useKeyboardShortcuts({
     }, []);
 
     const handleKeyDown = useCallback((e: KeyboardEvent) => {
-        if (!enabled) return;
-
-        // Don't trigger shortcuts when typing in inputs
+        // Don't trigger shortcuts when typing in inputs or when a modal/dialog is open
         const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
-            // Only allow Escape in inputs
-            if (e.key === 'Escape') {
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+        const hasOpenDialog = !!document.querySelector('[role="dialog"]');
+
+        if (isInput || hasOpenDialog) {
+            // Only allow Escape in inputs if no modal is open
+            if (e.key === 'Escape' && isInput && !hasOpenDialog) {
                 (target as HTMLInputElement).blur();
                 onEscape();
             }

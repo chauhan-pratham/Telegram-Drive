@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Folder, Download, RefreshCw, UploadCloud, Trash2, Pencil, Shield, ChevronDown, Share2, Link, Copy, X, Loader2, Wifi, Activity, Zap, Eye, EyeOff, Search, Plus, Star, LayoutGrid, List, FolderPlus, MoreVertical, HardDrive, Menu, ArrowUp, ArrowDown, LogOut, Settings, Clock, Users, ArrowLeft, AlertCircle, CheckCircle2, HelpCircle, Cloud, Sliders, Info, CheckSquare } from 'lucide-react';
+import { Folder, Download, RefreshCw, UploadCloud, Trash2, Pencil, Shield, ChevronDown, Share2, Link, Copy, X, Loader2, Wifi, Activity, Zap, Eye, EyeOff, Search, Plus, Star, LayoutGrid, List, FolderPlus, MoreVertical, HardDrive, Menu, ArrowUp, ArrowDown, LogOut, Settings, Clock, Users, ArrowLeft, AlertCircle, CheckCircle2, HelpCircle, Cloud, Sliders, Info, CheckSquare, FolderInput, FolderArchive, SlidersHorizontal } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
@@ -12,6 +12,7 @@ import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { MobileFileThumbnail } from './MobileFileThumbnail';
 import { ActionPopover, ActionItem } from './ActionPopover';
 import { RenameFolderSheet } from './RenameFolderSheet';
+import { MoveToFolderModal } from '../desktop/dashboard/MoveToFolderModal';
 import { usePlatform } from '../../hooks/usePlatform';
 import { useTelegramConnection } from '../../hooks/useTelegramConnection';
 import { useFileUpload } from '../../hooks/useFileUpload';
@@ -23,7 +24,7 @@ import { PdfViewer } from '../desktop/dashboard/PdfViewer';
 import { PreviewModal } from '../desktop/dashboard/PreviewModal';
 import { useTheme } from '../../context/ThemeContext';
 import { useDrive } from '../../context/DriveContext';
-import { TelegramFile, TelegramFolder, BandwidthStats } from '../../types';
+import { TelegramFile, TelegramFolder, BandwidthStats, FolderParticipantInfo } from '../../types';
 import { useSettings } from '../../context/SettingsContext';
 import { version as appVersion } from '../../../package.json';
 
@@ -32,16 +33,21 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
   const [activeTab, setActiveTab] = useState<MobileTab>('home');
   const [_activeSubTab, _setActiveSubTab] = useState<'my-drive' | 'computers'>('my-drive');
   const [activeHomeSubTab, setActiveHomeSubTab] = useState<'suggested' | 'activity'>('suggested');
+  const [sortField, setSortField] = useState<'name' | 'size' | 'date'>('name');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, _setCategoryFilter] = useState<'all' | 'folders' | 'photos' | 'videos' | 'audio' | 'pdfs' | 'archives'>('all');
+  const [fileTypeFilter, setFileTypeFilter] = useState<'all' | 'pdf' | 'image' | 'video' | 'audio' | 'archive' | 'document'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [showFabMenu, setShowFabMenu] = useState(false);
   const [showProfileSheet, setShowProfileSheet] = useState(false);
   const [showDrawer, setShowDrawer] = useState(false);
+  const [showSortFilterSheet, setShowSortFilterSheet] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [infoItem, setInfoItem] = useState<TelegramFile | TelegramFolder | null>(null);
   const { isStarred, isFolderStarred, starFile, unstarFile, starFolder, unstarFolder, starredFiles, starredFolders, offlineFiles, makeAvailableOffline, removeOfflineAccess, isOffline: _isOffline, getOfflineState, trashedFiles, trashedFolders, trashFile, trashFolder, restoreFile, restoreFolder, deletePermanently, deleteFolderPermanently, emptyTrash } = useDrive();
   const { isAndroid } = usePlatform();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, customThemes, activeCustomThemeId, setActiveCustomTheme } = useTheme();
   const { settings, updateSetting } = useSettings();
 
   // ── Total Storage Size Query ──────────────────────────────────────────────
@@ -211,7 +217,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
   const mainScrollRef = useRef<HTMLElement>(null);
 
-  const { handleManualUpload } = useFileUpload(activeFolderId, store);
+  const { handleManualUpload, handleFolderUpload } = useFileUpload(activeFolderId, store);
   const { queueDownload, queueBulkDownload } = useFileDownload(store);
 
   const [playingFile, setPlayingFile] = useState<TelegramFile | null>(null);
@@ -449,6 +455,16 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     if (!isSavedMessages) {
       actions.push(
         {
+          label: 'Download Folder',
+          icon: <Download className="w-4 h-4 text-green-400" />,
+          onClick: () => {
+            setFolderActionMenu(null);
+            invoke('cmd_zip_and_download_folder', { folderId: folder.id, folderName: folder.name })
+              .then(() => toast.success(`Downloading "${folder.name}.zip"...`))
+              .catch(err => toast.error(`Failed to download folder: ${err}`));
+          },
+        },
+        {
           label: 'Rename',
           icon: <Pencil className="w-4 h-4" />,
           onClick: () => {
@@ -467,6 +483,23 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           onClick: () => handleFolderShareInvite(folder),
         },
         {
+          label: 'Move to Folder',
+          icon: <FolderInput className="w-4 h-4 text-amber-400" />,
+          onClick: () => {
+            setFolderActionMenu(null);
+            setSelectedIds([folder.id]);
+            setShowMoveModal(true);
+          },
+        },
+        {
+          label: 'Details',
+          icon: <Info className="w-4 h-4 text-telegram-primary" />,
+          onClick: () => {
+            setFolderActionMenu(null);
+            setInfoItem(folder);
+          },
+        },
+        {
           label: 'Delete',
           icon: <Trash2 className="w-4 h-4" />,
           onClick: () => {
@@ -477,6 +510,15 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           destructive: true,
         }
       );
+    } else {
+      actions.push({
+        label: 'Details',
+        icon: <Info className="w-4 h-4 text-telegram-primary" />,
+        onClick: () => {
+          setFolderActionMenu(null);
+          setInfoItem(folder);
+        },
+      });
     }
 
     return actions;
@@ -625,6 +667,23 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         },
       },
       {
+        label: 'Move to Folder',
+        icon: <FolderInput className="w-4 h-4 text-amber-400" />,
+        onClick: () => {
+          setActionMenuFile(null);
+          setSelectedIds([file.id]);
+          setShowMoveModal(true);
+        },
+      },
+      {
+        label: 'Details',
+        icon: <Info className="w-4 h-4 text-telegram-primary" />,
+        onClick: () => {
+          setActionMenuFile(null);
+          setInfoItem(file);
+        },
+      },
+      {
         label: 'Delete',
         icon: <Trash2 className="w-4 h-4" />,
         onClick: () => {
@@ -714,6 +773,33 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
     return list;
   }, [displayFiles, activeTab, activeFolderId, searchQuery, categoryFilter]);
 
+  const sortedAndFilteredFiles = useMemo(() => {
+    let list = [...filteredFiles];
+
+    if (fileTypeFilter !== 'all') {
+      if (fileTypeFilter === 'pdf') list = list.filter(f => isPdfFile(f.name, f.mime_type));
+      else if (fileTypeFilter === 'image') list = list.filter(f => isImageFile(f.name, f.mime_type));
+      else if (fileTypeFilter === 'video') list = list.filter(f => isMediaFile(f.name, f.mime_type));
+      else if (fileTypeFilter === 'audio') list = list.filter(f => !!f.name.match(/\.(mp3|wav|flac|ogg|m4a|aac)$/i));
+      else if (fileTypeFilter === 'archive') list = list.filter(f => !!f.name.match(/\.(zip|rar|7z|tar|gz)$/i));
+      else if (fileTypeFilter === 'document') list = list.filter(f => !isImageFile(f.name, f.mime_type) && !isMediaFile(f.name, f.mime_type) && !f.name.match(/\.(zip|rar|7z|tar|gz)$/i));
+    }
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'size') {
+        cmp = (a.size || 0) - (b.size || 0);
+      } else if (sortField === 'date') {
+        cmp = (a.created_at || '').localeCompare(b.created_at || '');
+      } else {
+        cmp = a.name.localeCompare(b.name);
+      }
+      return sortOrder === 'asc' ? cmp : -cmp;
+    });
+
+    return list;
+  }, [filteredFiles, fileTypeFilter, sortField, sortOrder]);
+
   const suggestedFiles = useMemo(() => {
     const list = [...filteredFiles];
     list.sort((a, b) => {
@@ -770,6 +856,14 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               title="Download selected"
             >
               <Download className="w-5 h-5" />
+            </button>
+
+            <button
+              onClick={() => setShowMoveModal(true)}
+              className="p-2 rounded-full hover:bg-white/10 text-amber-400 hover:text-amber-300 transition cursor-pointer"
+              title="Move selected to folder"
+            >
+              <FolderInput className="w-5 h-5" />
             </button>
 
             <button
@@ -1048,13 +1142,17 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           {/* Sub-Header Sort & Layout Controls */}
           <div className="flex items-center justify-between px-1 text-xs pt-1">
             <button
-              onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-              className="flex items-center gap-1.5 font-semibold text-telegram-text hover:text-telegram-primary transition cursor-pointer"
+              onClick={() => setShowSortFilterSheet(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-telegram-surface border border-telegram-border/40 font-semibold text-telegram-text hover:text-telegram-primary transition cursor-pointer text-xs"
             >
-              <span>Name</span>
-              <div className="p-1 rounded-full bg-telegram-hover/40">
-                <ArrowUp className={`w-3 h-3 transition-transform duration-200 ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
-              </div>
+              <SlidersHorizontal className="w-3.5 h-3.5 text-telegram-primary" />
+              <span className="capitalize">{sortField}</span>
+              {fileTypeFilter !== 'all' && (
+                <span className="px-1.5 py-0.2 rounded-full bg-telegram-primary/20 text-telegram-primary text-[10px]">
+                  {fileTypeFilter}
+                </span>
+              )}
+              <ArrowUp className={`w-3 h-3 transition-transform duration-200 ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
             </button>
 
             {/* View Mode Switcher Pill [ ≡ | 🔲 ] */}
@@ -1095,6 +1193,18 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
+
+            {/* Live Proxy Status Badge */}
+            {settings.proxyEnabled && settings.proxyLiveStateEnabled && (
+              <div
+                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#18151f] border border-white/10 text-[10px] text-white/70 font-mono shrink-0 shadow-inner"
+                title={latencyMs !== null && latencyMs >= 0 ? `${latencyMs}ms latency` : 'Proxy offline'}
+              >
+                <div className={`w-1.5 h-1.5 rounded-full ${latencyMs === null ? 'bg-amber-400 animate-pulse' : latencyMs >= 0 ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-red-500'}`} />
+                <span>{latencyMs === null ? 'Proxy' : latencyMs >= 0 ? `${latencyMs}ms` : 'Off'}</span>
+              </div>
+            )}
+
             {/* Profile Avatar Icon */}
             <div
               onClick={() => setShowProfileSheet(true)}
@@ -1442,12 +1552,17 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             {/* Dynamic Real File List */}
             {categoryFilter !== 'folders' && (
               <TouchFileList
-                files={filteredFiles}
+                files={sortedAndFilteredFiles}
                 isLoading={isLoading && allFiles.length === 0}
                 onDownload={handleDownload}
                 onDelete={handleDeleteFile}
                 onPreview={handlePreview}
                 onRename={handleRenameFile}
+                onDetails={(file) => setInfoItem(file)}
+                onMoveToFolder={(file) => {
+                  setSelectedIds([file.id]);
+                  setShowMoveModal(true);
+                }}
                 onCopyTelegramLink={handleCopyTelegramLink}
                 selectedIds={selectedIds}
                 onToggleSelection={handleToggleSelection}
@@ -2144,67 +2259,104 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 <Settings className="w-5 h-5 stroke-[2.2]" />
               </div>
               <div>
-                <h2 className="text-base font-bold text-white tracking-tight">App Settings</h2>
-                <p className="text-xs text-white/50 font-normal">Manage preferences, proxy, and diagnostic tools</p>
+                <h2 className="text-base font-bold text-telegram-text tracking-tight">App Settings</h2>
+                <p className="text-xs text-telegram-subtext font-normal">Manage preferences, proxy, and diagnostic tools</p>
               </div>
             </div>
 
             {/* Preferences Section */}
-            <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
+            <div className="p-5 rounded-3xl bg-telegram-surface border border-telegram-border/40 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Sliders className="w-3.5 h-3.5" />
                 Preferences
               </h3>
               
               {/* Theme Setting */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">Appearance Theme</p>
-                  <p className="text-xs text-white/55 mt-0.5">Choose light or dark mode theme</p>
+                  <p className="text-sm font-semibold text-telegram-text">Appearance Theme</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5">Choose light or dark mode theme</p>
                 </div>
                 <div className="relative">
                   <select
                     value={theme}
                     onChange={e => setTheme(e.target.value as 'dark' | 'light')}
-                    className="appearance-none bg-[#18151f] border border-white/15 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-white focus:outline-none focus:border-telegram-primary transition cursor-pointer shadow-inner"
+                    className="appearance-none bg-telegram-bg border border-telegram-border/40 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-telegram-text focus:outline-none focus:border-telegram-primary transition cursor-pointer shadow-inner"
                   >
-                    <option value="dark">Dark Theme</option>
-                    <option value="light">Light Theme</option>
+                    <option value="dark" className="bg-telegram-surface text-telegram-text">Dark Theme</option>
+                    <option value="light" className="bg-telegram-surface text-telegram-text">Light Theme</option>
                   </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-white/50 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-3.5 h-3.5 text-telegram-subtext absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 
-              {/* ZIP Folders Before Upload */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              {/* Theme Presets Swatches */}
+              {customThemes.length > 0 && (
+                <div className="py-2 border-b border-telegram-border/20 space-y-2">
+                  <p className="text-xs font-semibold text-telegram-text">Color Theme Presets</p>
+                  <div className="grid grid-cols-4 gap-2">
+                    {customThemes.map(t => (
+                      <button
+                        key={t.id}
+                        onClick={() => setActiveCustomTheme(activeCustomThemeId === t.id ? null : t.id)}
+                        className={`relative rounded-xl p-1 transition-all cursor-pointer ${activeCustomThemeId === t.id ? 'ring-2 ring-telegram-primary border border-telegram-primary' : 'border border-telegram-border/30 hover:border-telegram-border/60'}`}
+                      >
+                        <div className="rounded-lg overflow-hidden h-7 flex shadow-xs">
+                          <div className="flex-1" style={{ background: t.palette.bg }} />
+                          <div className="flex-1" style={{ background: t.palette.surface }} />
+                          <div className="flex-1" style={{ background: t.palette.primary }} />
+                        </div>
+                        <p className="text-[10px] text-telegram-subtext mt-1 truncate text-center font-medium">{t.name}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Performance Mode Toggle */}
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div className="pr-4">
-                  <p className="text-sm font-semibold text-white/95">ZIP Folders Before Upload</p>
-                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">Automatically zip folders before uploading them to Telegram.</p>
+                  <p className="text-sm font-semibold text-telegram-text">Performance Mode</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5 leading-relaxed">Disable blur effects and heavy animations for maximum speed.</p>
+                </div>
+                <button
+                  onClick={() => updateSetting('performanceMode', !settings.performanceMode)}
+                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 border cursor-pointer ${settings.performanceMode ? 'bg-telegram-primary border-telegram-primary shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-slate-300 dark:bg-white/20 border-slate-400/50 dark:border-white/20 shadow-inner'}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow-md transition-all duration-200 ${settings.performanceMode ? 'translate-x-6 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
+                </button>
+              </div>
+
+              {/* ZIP Folders Before Upload */}
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
+                <div className="pr-4">
+                  <p className="text-sm font-semibold text-telegram-text">ZIP Folders Before Upload</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5 leading-relaxed">Automatically zip folders before uploading them to Telegram.</p>
                 </div>
                 <button
                   onClick={() => updateSetting('zipFolders', !settings.zipFolders)}
-                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 border ${settings.zipFolders ? 'bg-telegram-primary border-telegram-primary shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-white/10 border-white/10'}`}
+                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 border cursor-pointer ${settings.zipFolders ? 'bg-telegram-primary border-telegram-primary shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-slate-300 dark:bg-white/20 border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${settings.zipFolders ? 'translate-x-6' : 'translate-x-0'}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow-md transition-all duration-200 ${settings.zipFolders ? 'translate-x-6 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                 </button>
               </div>
 
             </div>
 
             {/* Connection Diagnostics */}
-            <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
+            <div className="p-5 rounded-3xl bg-telegram-surface border border-telegram-border/40 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Wifi className="w-3.5 h-3.5" />
                 Connection Diagnostics
               </h3>
 
               {/* Connection status indicator */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div className="flex items-center gap-2.5">
-                  <Activity className="w-4 h-4 text-white/60" />
-                  <p className="text-sm font-semibold text-white/95">Status</p>
+                  <Activity className="w-4 h-4 text-telegram-subtext" />
+                  <p className="text-sm font-semibold text-telegram-text">Status</p>
                 </div>
-                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-telegram-hover/30 border border-telegram-border/30">
                   <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-red-500'}`} />
                   <span className={`text-xs font-bold ${isConnected ? 'text-emerald-400' : 'text-red-400'}`}>
                     {isConnected ? 'Connected to Telegram' : 'Offline'}
@@ -2213,10 +2365,10 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               </div>
 
               {/* Ping test */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">Ping</p>
-                  <p className="text-xs text-white/55 mt-0.5 font-medium">
+                  <p className="text-sm font-semibold text-telegram-text">Ping</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5 font-medium">
                     {latencyMs !== null
                       ? latencyMs >= 0
                         ? `${latencyMs} ms`
@@ -2246,7 +2398,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {/* Latency quality bar */}
               {latencyMs !== null && latencyMs >= 0 && (
                 <div className="flex items-center gap-3 py-1">
-                  <div className="flex-1 h-2 rounded-full bg-black/40 overflow-hidden border border-white/5 p-0.5">
+                  <div className="flex-1 h-2 rounded-full bg-telegram-bg overflow-hidden border border-telegram-border/30 p-0.5">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${latencyMs < 100 ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]' : latencyMs < 250 ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]'}`}
                       style={{ width: `${Math.min(100, Math.max(5, (500 - latencyMs) / 5))}%` }}
@@ -2262,13 +2414,13 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               {bandwidth && (
                 <div className="flex items-center justify-between py-2">
                   <div>
-                    <p className="text-sm font-semibold text-white/95">Bandwidth Usage</p>
-                    <p className="text-xs text-white/55 mt-0.5">Upload / Download since connected</p>
+                    <p className="text-sm font-semibold text-telegram-text">Bandwidth Usage</p>
+                    <p className="text-xs text-telegram-subtext mt-0.5">Upload / Download since connected</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-mono font-bold text-white bg-[#18151f] px-3 py-1.5 rounded-xl border border-white/10 shadow-inner">
+                    <p className="text-xs font-mono font-bold text-telegram-text bg-telegram-bg px-3 py-1.5 rounded-xl border border-telegram-border/30 shadow-inner">
                       <span className="text-emerald-400">↑ {formatBytes(bandwidth.up_bytes)}</span>
-                      <span className="text-white/30 mx-1.5">|</span>
+                      <span className="text-telegram-subtext/40 mx-1.5">|</span>
                       <span className="text-sky-400">↓ {formatBytes(bandwidth.down_bytes)}</span>
                     </p>
                   </div>
@@ -2277,64 +2429,64 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             </div>
 
             {/* Proxy Configuration */}
-            <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
+            <div className="p-5 rounded-3xl bg-telegram-surface border border-telegram-border/40 shadow-lg space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                 <Shield className="w-3.5 h-3.5" />
                 Proxy
               </h3>
 
               {/* Enable Proxy Toggle */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div className="pr-4">
-                  <p className="text-sm font-semibold text-white/95">Enable Proxy</p>
-                  <p className="text-xs text-white/55 mt-0.5 leading-relaxed">Route connections through a proxy server for improved privacy or access.</p>
+                  <p className="text-sm font-semibold text-telegram-text">Enable Proxy</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5 leading-relaxed">Route connections through a proxy server for improved privacy or access.</p>
                 </div>
                 <button
                   onClick={() => updateSetting('proxyEnabled', !settings.proxyEnabled)}
-                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 border ${settings.proxyEnabled ? 'bg-telegram-primary border-telegram-primary shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-white/10 border-white/10'}`}
+                  className={`relative w-12 h-6 rounded-full transition-all duration-200 shrink-0 border cursor-pointer ${settings.proxyEnabled ? 'bg-telegram-primary border-telegram-primary shadow-[0_0_10px_rgba(59,130,246,0.4)]' : 'bg-slate-300 dark:bg-white/20 border-slate-400/50 dark:border-white/20 shadow-inner'}`}
                 >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform duration-200 ${settings.proxyEnabled ? 'translate-x-6' : 'translate-x-0'}`} />
+                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full shadow-md transition-all duration-200 ${settings.proxyEnabled ? 'translate-x-6 bg-white' : 'translate-x-0 bg-slate-600 dark:bg-slate-200'}`} />
                 </button>
               </div>
 
               {/* Proxy Type */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">Proxy Type</p>
-                  <p className="text-xs text-white/55 mt-0.5">SOCKS5 is the only supported proxy type.</p>
+                  <p className="text-sm font-semibold text-telegram-text">Proxy Type</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5">SOCKS5 is the only supported proxy type.</p>
                 </div>
                 <div className="relative">
                   <select
                     value={settings.proxyType}
                     onChange={e => updateSetting('proxyType', e.target.value as 'socks5')}
-                    className="appearance-none bg-[#18151f] border border-white/15 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-white focus:outline-none focus:border-telegram-primary transition cursor-pointer shadow-inner"
+                    className="appearance-none bg-telegram-bg border border-telegram-border/40 rounded-xl pl-3.5 pr-8 py-2 text-xs font-semibold text-telegram-text focus:outline-none focus:border-telegram-primary transition cursor-pointer shadow-inner"
                   >
-                    <option value="socks5">SOCKS5</option>
+                    <option value="socks5" className="bg-telegram-surface text-telegram-text">SOCKS5</option>
                   </select>
-                  <ChevronDown className="w-3.5 h-3.5 text-white/50 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <ChevronDown className="w-3.5 h-3.5 text-telegram-subtext absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
               </div>
 
               {/* Host */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">Host</p>
-                  <p className="text-xs text-white/55 mt-0.5">IP address or hostname of the proxy server.</p>
+                  <p className="text-sm font-semibold text-telegram-text">Host</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5">IP address or hostname of the proxy server.</p>
                 </div>
                 <input
                   type="text"
                   placeholder="127.0.0.1"
                   value={settings.proxyHost}
                   onChange={e => updateSetting('proxyHost', e.target.value)}
-                  className="w-36 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-white/30 shadow-inner"
+                  className="w-36 bg-telegram-bg border border-telegram-border/40 rounded-xl px-3 py-2 text-xs font-medium text-telegram-text text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-telegram-subtext/40 shadow-inner"
                 />
               </div>
 
               {/* Port */}
-              <div className="flex items-center justify-between py-2 border-b border-white/5">
+              <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                 <div>
-                  <p className="text-sm font-semibold text-white/95">Port</p>
-                  <p className="text-xs text-white/55 mt-0.5">Port number of the proxy server (1–65535).</p>
+                  <p className="text-sm font-semibold text-telegram-text">Port</p>
+                  <p className="text-xs text-telegram-subtext mt-0.5">Port number of the proxy server (1–65535).</p>
                 </div>
                 <input
                   type="number"
@@ -2342,37 +2494,37 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   max="65535"
                   value={settings.proxyPort}
                   onChange={e => updateSetting('proxyPort', Math.max(1, Math.min(65535, parseInt(e.target.value) || 1080)))}
-                  className="w-24 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-center focus:outline-none focus:border-telegram-primary transition shadow-inner"
+                  className="w-24 bg-telegram-bg border border-telegram-border/40 rounded-xl px-3 py-2 text-xs font-medium text-telegram-text text-center focus:outline-none focus:border-telegram-primary transition shadow-inner"
                 />
               </div>
 
               {/* SOCKS5 auth fields */}
               {settings.proxyType === 'socks5' && (
                 <>
-                  <div className="flex items-center justify-between py-2 border-b border-white/5">
+                  <div className="flex items-center justify-between py-2 border-b border-telegram-border/20">
                     <div>
-                      <p className="text-sm font-semibold text-white/95">Username</p>
-                      <p className="text-xs text-white/55 mt-0.5">Optional</p>
+                      <p className="text-sm font-semibold text-telegram-text">Username</p>
+                      <p className="text-xs text-telegram-subtext mt-0.5">Optional</p>
                     </div>
                     <input
                       type="text"
                       placeholder="Optional"
                       value={settings.proxyUsername}
                       onChange={e => updateSetting('proxyUsername', e.target.value)}
-                      className="w-36 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-white/30 shadow-inner"
+                      className="w-36 bg-telegram-bg border border-telegram-border/40 rounded-xl px-3 py-2 text-xs font-medium text-telegram-text text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-telegram-subtext/40 shadow-inner"
                     />
                   </div>
                   <div className="flex items-center justify-between py-2">
                     <div>
-                      <p className="text-sm font-semibold text-white/95">Password</p>
-                      <p className="text-xs text-white/55 mt-0.5">Optional</p>
+                      <p className="text-sm font-semibold text-telegram-text">Password</p>
+                      <p className="text-xs text-telegram-subtext mt-0.5">Optional</p>
                     </div>
                     <input
                       type="password"
                       placeholder="Optional"
                       value={settings.proxyPassword}
                       onChange={e => updateSetting('proxyPassword', e.target.value)}
-                      className="w-36 bg-[#18151f] border border-white/15 rounded-xl px-3 py-2 text-xs font-medium text-white text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-white/30 shadow-inner"
+                      className="w-36 bg-telegram-bg border border-telegram-border/40 rounded-xl px-3 py-2 text-xs font-medium text-telegram-text text-right focus:outline-none focus:border-telegram-primary transition placeholder:text-telegram-subtext/40 shadow-inner"
                     />
                   </div>
                 </>
@@ -2388,7 +2540,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
 
             {/* Shared Files (Android only) */}
             {isAndroid && cachedFiles.length > 0 && (
-              <div className="p-5 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg space-y-4">
+              <div className="p-5 rounded-3xl bg-telegram-surface border border-telegram-border/40 shadow-lg space-y-4">
                 <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center gap-2">
                   <Share2 className="w-3.5 h-3.5" />
                   Shared Files ({cachedFiles.length})
@@ -2399,11 +2551,11 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                     return (
                       <div
                         key={entry.cached_path}
-                        className="flex items-center justify-between p-3.5 rounded-2xl bg-[#18151f] border border-white/10"
+                        className="flex items-center justify-between p-3.5 rounded-2xl bg-telegram-bg border border-telegram-border/30"
                       >
                         <div className="min-w-0 flex-1 mr-3">
-                          <p className="text-xs font-semibold text-white truncate">{entry.file_name}</p>
-                          <p className="text-[10px] text-white/50 font-mono mt-0.5">{formatBytes(entry.file_size)}</p>
+                          <p className="text-xs font-semibold text-telegram-text truncate">{entry.file_name}</p>
+                          <p className="text-[10px] text-telegram-subtext font-mono mt-0.5">{formatBytes(entry.file_size)}</p>
                         </div>
                         <button
                           onClick={() => handleUploadCachedFile(entry)}
@@ -2436,7 +2588,7 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
             )}
 
             {/* About Card */}
-            <div className="p-6 rounded-3xl bg-[#231f2c] border border-white/10 shadow-lg text-center space-y-4">
+            <div className="p-6 rounded-3xl bg-telegram-surface border border-telegram-border/40 shadow-lg text-center space-y-4">
               <h3 className="text-xs font-bold text-telegram-primary tracking-wider uppercase flex items-center justify-center gap-2">
                 <Info className="w-3.5 h-3.5" />
                 About
@@ -2446,14 +2598,14 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                   <img src="/logo.svg?v=2" className="w-full h-full drop-shadow" alt="Telegram Drive Logo" />
                 </div>
                 <div>
-                  <p className="text-base font-bold text-white tracking-tight">Telegram Drive</p>
-                  <p className="text-xs text-white/50 font-mono mt-0.5">v{appVersion}</p>
+                  <p className="text-base font-bold text-telegram-text tracking-tight">Telegram Drive</p>
+                  <p className="text-xs text-telegram-subtext font-mono mt-0.5">v{appVersion}</p>
                 </div>
 
-                <div className="w-12 h-px bg-white/10" />
+                <div className="w-12 h-px bg-telegram-border/30" />
 
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-white/80">Developed by chauhan-pratham</p>
+                  <p className="text-xs font-semibold text-telegram-subtext">Developed by chauhan-pratham</p>
 
                   <button
                     onClick={(e) => { e.preventDefault(); openUrl('https://github.com/chauhan-pratham/Telegram-Drive'); }}
@@ -2599,11 +2751,11 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
           onClick={() => setShowFabMenu(false)}
         >
           <div
-            className="w-full bg-[#1e1b26] border-t border-telegram-border/40 rounded-t-3xl p-6 pb-8 space-y-5 shadow-2xl animate-in slide-in-from-bottom duration-200"
+            className="w-full bg-telegram-surface border-t border-telegram-border/40 rounded-t-3xl p-6 pb-8 space-y-5 shadow-2xl animate-in slide-in-from-bottom duration-200"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Drag Handle Indicator */}
-            <div className="w-10 h-1 rounded-full bg-white/20 mx-auto" />
+            <div className="w-10 h-1 rounded-full bg-telegram-text/20 mx-auto" />
 
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-telegram-text">Create new</h3>
@@ -2612,8 +2764,8 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
               </button>
             </div>
 
-            {/* 2-Column Material Circular Grid */}
-            <div className="grid grid-cols-2 gap-6 text-center py-2 max-w-xs mx-auto">
+            {/* 3-Column Material Circular Grid */}
+            <div className="grid grid-cols-3 gap-4 text-center py-2 max-w-sm mx-auto">
               {/* Folder */}
               <button
                 onClick={() => {
@@ -2622,13 +2774,13 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 }}
                 className="flex flex-col items-center gap-2.5 group cursor-pointer"
               >
-                <div className="w-16 h-16 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:scale-105 active:scale-95 transition-all shadow-md">
-                  <FolderPlus className="w-7 h-7" />
+                <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 group-hover:scale-105 active:scale-95 transition-all shadow-md">
+                  <FolderPlus className="w-6 h-6" />
                 </div>
                 <span className="text-xs font-semibold text-telegram-text">Folder</span>
               </button>
 
-              {/* Upload */}
+              {/* Upload File */}
               <button
                 onClick={() => {
                   setShowFabMenu(false);
@@ -2636,10 +2788,24 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
                 }}
                 className="flex flex-col items-center gap-2.5 group cursor-pointer"
               >
-                <div className="w-16 h-16 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 group-hover:scale-105 active:scale-95 transition-all shadow-md">
-                  <UploadCloud className="w-7 h-7" />
+                <div className="w-14 h-14 rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400 group-hover:scale-105 active:scale-95 transition-all shadow-md">
+                  <UploadCloud className="w-6 h-6" />
                 </div>
-                <span className="text-xs font-semibold text-telegram-text">Upload</span>
+                <span className="text-xs font-semibold text-telegram-text">Upload File</span>
+              </button>
+
+              {/* Upload Folder (ZIP) */}
+              <button
+                onClick={() => {
+                  setShowFabMenu(false);
+                  handleFolderUpload();
+                }}
+                className="flex flex-col items-center gap-2.5 group cursor-pointer"
+              >
+                <div className="w-14 h-14 rounded-full bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400 group-hover:scale-105 active:scale-95 transition-all shadow-md">
+                  <FolderArchive className="w-6 h-6" />
+                </div>
+                <span className="text-xs font-semibold text-telegram-text">Folder (ZIP)</span>
               </button>
             </div>
           </div>
@@ -2819,6 +2985,52 @@ export default function MobileDashboard({ onLogout }: { onLogout?: () => void })
         />
       )}
 
+      {showMoveModal && (
+        <MoveToFolderModal
+          folders={folders}
+          activeFolderId={activeFolderId}
+          onClose={() => setShowMoveModal(false)}
+          onSelect={async (targetFolderId) => {
+            setShowMoveModal(false);
+            try {
+              const targetName = targetFolderId === null ? 'My Drive' : folders.find(f => f.id === targetFolderId)?.name || 'Folder';
+              toast.info(`Moving ${selectedIds.length} item(s) to "${targetName}"...`);
+              await invoke('cmd_move_files_to_folder', {
+                fileIds: selectedIds.filter(id => allFiles.some(f => f.id === id)),
+                targetFolderId,
+              });
+              toast.success(`Moved ${selectedIds.length} item(s) to "${targetName}"`);
+              queryClient.invalidateQueries({ queryKey: ['files'] });
+              queryClient.invalidateQueries({ queryKey: ['folders'] });
+              setSelectedIds([]);
+            } catch (err) {
+              toast.error(`Failed to move items: ${err}`);
+            }
+          }}
+          onCreateFolder={handleCreateFolder}
+        />
+      )}
+
+      {infoItem && (
+        <MobileDetailsSheet
+          item={infoItem}
+          onClose={() => setInfoItem(null)}
+          folders={folders}
+        />
+      )}
+
+      {showSortFilterSheet && (
+        <SortFilterSheet
+          sortField={sortField}
+          setSortField={setSortField}
+          sortOrder={sortOrder}
+          setSortOrder={setSortOrder}
+          fileTypeFilter={fileTypeFilter}
+          setFileTypeFilter={setFileTypeFilter}
+          onClose={() => setShowSortFilterSheet(false)}
+        />
+      )}
+
       {/* Authentic Google Drive Side Navigation Drawer */}
       {showDrawer && (
         <div
@@ -2959,13 +3171,13 @@ function MakePublicSheet({
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center mb-4">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
-        <h3 className="text-base font-bold text-white mb-1">Make "{folderName}" Public</h3>
+        <h3 className="text-base font-bold text-telegram-text mb-1">Make "{folderName}" Public</h3>
         <p className="text-xs text-telegram-subtext mb-4">
           Enter an optional username for your public link (or leave blank to auto-generate):
         </p>
@@ -2982,7 +3194,7 @@ function MakePublicSheet({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="channel_username"
-              className="w-full pl-8 pr-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-telegram-primary transition-all"
+              className="w-full pl-8 pr-4 py-3 bg-telegram-bg border border-telegram-border/40 rounded-xl text-telegram-text text-sm focus:outline-none focus:border-telegram-primary transition-all"
               autoFocus
             />
           </div>
@@ -2991,13 +3203,13 @@ function MakePublicSheet({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
+              className="flex-1 py-3 bg-telegram-hover/30 hover:bg-telegram-hover/60 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 text-white font-semibold rounded-xl text-sm transition-all shadow-lg"
+              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 text-black font-bold rounded-xl text-sm transition-all shadow-lg"
             >
               Make Public
             </button>
@@ -3022,13 +3234,13 @@ function RenameFileSheet({
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center mb-4">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
-        <h3 className="text-base font-bold text-white mb-4">Rename File</h3>
+        <h3 className="text-base font-bold text-telegram-text mb-4">Rename File</h3>
 
         <form onSubmit={(e) => {
           e.preventDefault();
@@ -3041,7 +3253,7 @@ function RenameFileSheet({
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-telegram-primary transition-all mb-6"
+            className="w-full px-4 py-3 bg-telegram-bg border border-telegram-border/40 rounded-xl text-telegram-text text-sm focus:outline-none focus:border-telegram-primary transition-all mb-6"
             autoFocus
           />
 
@@ -3049,14 +3261,14 @@ function RenameFileSheet({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
+              className="flex-1 py-3 bg-telegram-hover/30 hover:bg-telegram-hover/60 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!name.trim() || name.trim() === fileName}
-              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-all shadow-lg"
+              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 disabled:opacity-50 text-black font-bold rounded-xl text-sm transition-all shadow-lg"
             >
               Rename
             </button>
@@ -3080,13 +3292,13 @@ function CreateFolderSheet({
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center mb-4">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
-        <h3 className="text-base font-bold text-white mb-4">New Folder</h3>
+        <h3 className="text-base font-bold text-telegram-text mb-4">New Folder</h3>
 
         <form onSubmit={async (e) => {
           e.preventDefault();
@@ -3104,7 +3316,7 @@ function CreateFolderSheet({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Folder name"
-            className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:border-telegram-primary transition-all mb-6"
+            className="w-full px-4 py-3 bg-telegram-bg border border-telegram-border/40 rounded-xl text-telegram-text text-sm focus:outline-none focus:border-telegram-primary transition-all mb-6"
             autoFocus
           />
 
@@ -3112,18 +3324,18 @@ function CreateFolderSheet({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
+              className="flex-1 py-3 bg-telegram-hover/30 hover:bg-telegram-hover/60 text-telegram-subtext font-semibold rounded-xl text-sm transition-all"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!name.trim() || creating}
-              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
+              className="flex-1 py-3 bg-telegram-primary hover:bg-telegram-primary/80 disabled:opacity-50 text-black font-bold rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
             >
               {creating ? (
                 <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin text-black" />
                   <span>Creating...</span>
                 </>
               ) : (
@@ -3155,11 +3367,11 @@ function PrivateShareSheet({
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 space-y-4"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
 
         <div className="flex items-center gap-3">
@@ -3167,12 +3379,12 @@ function PrivateShareSheet({
             <Shield className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white">Private Folder Link Notice</h3>
+            <h3 className="text-base font-bold text-telegram-text">Private Folder Link Notice</h3>
             <p className="text-xs text-telegram-subtext mt-0.5 truncate max-w-[240px]">"{file.name}" is in a private folder</p>
           </div>
         </div>
 
-        <div className="p-3.5 bg-white/5 border border-white/10 rounded-2xl space-y-2 text-xs text-telegram-subtext leading-relaxed">
+        <div className="p-3.5 bg-telegram-hover/20 border border-telegram-border/30 rounded-2xl space-y-2 text-xs text-telegram-subtext leading-relaxed">
           <p className="font-semibold text-amber-300 flex items-center gap-1.5">
             <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
             Recipients must be members of this folder channel to open this file link.
@@ -3187,12 +3399,12 @@ function PrivateShareSheet({
             <>
               <button
                 onClick={() => { onClose(); onMakeFolderPublic(); }}
-                className="w-full flex items-center justify-between p-3.5 bg-telegram-primary/10 border border-telegram-primary/30 hover:bg-telegram-primary/20 rounded-2xl text-left transition-all group"
+                className="w-full flex items-center justify-between p-3.5 bg-telegram-primary/10 border border-telegram-primary/30 hover:bg-telegram-primary/20 rounded-2xl text-left transition-all group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <Eye className="w-5 h-5 text-telegram-primary shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-white">Make Folder Public</p>
+                    <p className="text-xs font-bold text-telegram-text">Make Folder Public</p>
                     <p className="text-[10px] text-telegram-subtext">Generates a public t.me link accessible to anyone</p>
                   </div>
                 </div>
@@ -3200,12 +3412,12 @@ function PrivateShareSheet({
 
               <button
                 onClick={() => { onClose(); onCopyFolderInvite(); }}
-                className="w-full flex items-center justify-between p-3.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-left transition-all group"
+                className="w-full flex items-center justify-between p-3.5 bg-telegram-hover/20 border border-telegram-border/30 hover:bg-telegram-hover/40 rounded-2xl text-left transition-all group cursor-pointer"
               >
                 <div className="flex items-center gap-3">
                   <Share2 className="w-5 h-5 text-emerald-400 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold text-white">Copy Folder Invite Link</p>
+                    <p className="text-xs font-bold text-telegram-text">Copy Folder Invite Link</p>
                     <p className="text-[10px] text-telegram-subtext">Grants recipient access to ALL files in this folder</p>
                   </div>
                 </div>
@@ -3215,12 +3427,12 @@ function PrivateShareSheet({
 
           <button
             onClick={() => { onClose(); onCopyPrivateLink(); }}
-            className="w-full flex items-center justify-between p-3.5 bg-white/5 border border-white/10 hover:bg-white/10 rounded-2xl text-left transition-all group"
+            className="w-full flex items-center justify-between p-3.5 bg-telegram-hover/20 border border-telegram-border/30 hover:bg-telegram-hover/40 rounded-2xl text-left transition-all group cursor-pointer"
           >
             <div className="flex items-center gap-3">
               <Copy className="w-5 h-5 text-blue-400 shrink-0" />
               <div>
-                <p className="text-xs font-bold text-white">Copy Member-Only Link</p>
+                <p className="text-xs font-bold text-telegram-text">Copy Member-Only Link</p>
                 <p className="text-[10px] text-telegram-subtext">Link works ONLY for existing members of this channel</p>
               </div>
             </div>
@@ -3229,7 +3441,7 @@ function PrivateShareSheet({
 
         <button
           onClick={onClose}
-          className="w-full py-3 bg-white/5 hover:bg-white/10 text-telegram-subtext font-semibold rounded-2xl text-xs transition-all mt-2"
+          className="w-full py-3 bg-telegram-hover/20 hover:bg-telegram-hover/40 text-telegram-subtext font-semibold rounded-2xl text-xs transition-all mt-2 cursor-pointer"
         >
           Cancel
         </button>
@@ -3250,11 +3462,11 @@ function FolderInviteWarningSheet({
   return (
     <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
       <div
-        className="w-full max-w-lg bg-[#1c1c1e] border border-white/10 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 space-y-4"
+        className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-6 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 space-y-4"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-center">
-          <div className="w-10 h-1 rounded-full bg-white/20" />
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
         </div>
 
         <div className="flex items-center gap-3">
@@ -3262,7 +3474,7 @@ function FolderInviteWarningSheet({
             <AlertCircle className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-white">⚠️ Share Folder Access</h3>
+            <h3 className="text-base font-bold text-telegram-text">⚠️ Share Folder Access</h3>
             <p className="text-xs text-telegram-subtext mt-0.5 truncate max-w-[240px]">"{folder.name}" Invite Link Warning</p>
           </div>
         </div>
@@ -3275,7 +3487,7 @@ function FolderInviteWarningSheet({
           <button
             type="button"
             onClick={onClose}
-            className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-telegram-subtext font-semibold rounded-2xl text-xs transition-all"
+            className="flex-1 py-3.5 bg-telegram-hover/30 hover:bg-telegram-hover/60 text-telegram-subtext font-semibold rounded-2xl text-xs transition-all cursor-pointer"
           >
             Cancel
           </button>
@@ -3285,11 +3497,220 @@ function FolderInviteWarningSheet({
               onConfirm();
               onClose();
             }}
-            className="flex-1 py-3.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded-2xl text-xs transition-all shadow-lg"
+            className="flex-1 py-3.5 bg-amber-500 hover:bg-amber-600 text-black font-bold rounded-2xl text-xs transition-all shadow-lg cursor-pointer"
           >
             Copy Invite Link
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MobileDetailsSheet({
+  item,
+  onClose,
+  folders,
+}: {
+  item: TelegramFile | TelegramFolder;
+  onClose: () => void;
+  folders: TelegramFolder[];
+}) {
+  const isFolder = 'mime_type' in item ? item.mime_type === 'folder' || item.type === 'folder' : true;
+  const parentFolder = !isFolder && 'folder_id' in item && item.folder_id ? folders.find(f => f.id === item.folder_id) : null;
+
+  const { data: participants = [], isLoading: isLoadingMembers } = useQuery<FolderParticipantInfo[]>({
+    queryKey: ['folder-participants', item.id],
+    queryFn: async () => {
+      return await invoke<FolderParticipantInfo[]>('cmd_get_folder_participants', { folderId: item.id });
+    },
+    enabled: isFolder && item.id > 0,
+  });
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-5 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-center mb-3">
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
+        </div>
+
+        <div className="flex items-center gap-3 mb-5 border-b border-telegram-border/20 pb-4">
+          <div className="p-3 rounded-2xl bg-telegram-primary/10 border border-telegram-primary/20 text-telegram-primary shrink-0">
+            {isFolder ? <Folder className="w-6 h-6" /> : <FileTypeIcon filename={item.name} className="w-6 h-6" />}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base font-bold text-telegram-text truncate">{item.name}</h3>
+            <p className="text-xs text-telegram-subtext mt-0.5">{isFolder ? 'Telegram Folder' : ('mime_type' in item ? item.mime_type : 'File')}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-full hover:bg-telegram-hover/30 text-telegram-subtext hover:text-telegram-text transition cursor-pointer">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="space-y-3.5 text-xs text-telegram-text">
+          {!isFolder && 'size' in item && (
+            <div className="flex justify-between py-1.5 border-b border-telegram-border/20">
+              <span className="text-telegram-subtext font-medium">File Size</span>
+              <span className="font-mono font-semibold text-telegram-text">{formatBytes(item.size)}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between py-1.5 border-b border-telegram-border/20">
+            <span className="text-telegram-subtext font-medium">Location</span>
+            <span className="font-semibold text-telegram-text">{parentFolder ? parentFolder.name : 'My Drive'}</span>
+          </div>
+
+          {'created_at' in item && item.created_at && (
+            <div className="flex justify-between py-1.5 border-b border-telegram-border/20">
+              <span className="text-telegram-subtext font-medium">Date Added</span>
+              <span className="font-mono font-semibold text-telegram-text">{item.created_at}</span>
+            </div>
+          )}
+
+          <div className="flex justify-between py-1.5 border-b border-telegram-border/20">
+            <span className="text-telegram-subtext font-medium">Type</span>
+            <span className="font-semibold text-telegram-text">{isFolder ? 'Folder' : ('mime_type' in item ? item.mime_type : 'File')}</span>
+          </div>
+        </div>
+
+        {isFolder && item.id > 0 && (
+          <div className="mt-5 pt-4 border-t border-telegram-border/30 space-y-3">
+            <h4 className="text-xs font-bold text-telegram-primary uppercase tracking-wider flex items-center gap-2">
+              <Users className="w-4 h-4" />
+              Folder Members ({participants.length})
+            </h4>
+
+            {isLoadingMembers ? (
+              <div className="flex justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-telegram-primary" />
+              </div>
+            ) : participants.length === 0 ? (
+              <p className="text-xs text-telegram-subtext italic">Private Telegram Folder</p>
+            ) : (
+              <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                {participants.map((p, idx) => {
+                  const initials = `${p.first_name?.[0] || ''}${p.last_name?.[0] || ''}`.toUpperCase() || '?';
+                  return (
+                    <div key={idx} className="flex items-center gap-3 p-2.5 rounded-2xl bg-telegram-hover/20 border border-telegram-border/30">
+                      <div className="w-8 h-8 rounded-full bg-telegram-primary/20 border border-telegram-primary/30 flex items-center justify-center text-telegram-primary text-xs font-bold shrink-0">
+                        {initials}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-telegram-text truncate">
+                          {p.first_name} {p.last_name || ''}
+                        </p>
+                        {p.username && <p className="text-[10px] text-telegram-subtext truncate">@{p.username}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SortFilterSheet({
+  sortField,
+  setSortField,
+  sortOrder,
+  setSortOrder,
+  fileTypeFilter,
+  setFileTypeFilter,
+  onClose,
+}: {
+  sortField: 'name' | 'size' | 'date';
+  setSortField: (field: 'name' | 'size' | 'date') => void;
+  sortOrder: 'asc' | 'desc';
+  setSortOrder: (order: 'asc' | 'desc' | ((prev: 'asc' | 'desc') => 'asc' | 'desc')) => void;
+  fileTypeFilter: 'all' | 'pdf' | 'image' | 'video' | 'audio' | 'archive' | 'document';
+  setFileTypeFilter: (filter: 'all' | 'pdf' | 'image' | 'video' | 'audio' | 'archive' | 'document') => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[200] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
+      <div className="w-full max-w-lg bg-telegram-surface border border-telegram-border/40 rounded-t-3xl p-5 pb-8 shadow-2xl animate-in slide-in-from-bottom duration-300 space-y-5" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-center">
+          <div className="w-10 h-1 rounded-full bg-telegram-text/20" />
+        </div>
+
+        <div className="flex items-center justify-between border-b border-telegram-border/20 pb-3">
+          <h3 className="text-sm font-bold text-telegram-text flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-telegram-primary" />
+            Sort & Filter Options
+          </h3>
+          <button onClick={onClose} className="p-1 rounded-full hover:bg-telegram-hover/30 text-telegram-subtext hover:text-telegram-text">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-telegram-primary uppercase tracking-wider">Sort By</label>
+          <div className="grid grid-cols-3 gap-2">
+            {(['name', 'size', 'date'] as const).map(field => (
+              <button
+                key={field}
+                onClick={() => setSortField(field)}
+                className={`py-2 px-3 rounded-xl text-xs font-semibold capitalize transition cursor-pointer ${sortField === field ? 'bg-telegram-primary text-black font-bold shadow' : 'bg-telegram-hover/20 text-telegram-text hover:bg-telegram-hover/40 border border-telegram-border/20'}`}
+              >
+                {field}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-telegram-primary uppercase tracking-wider">Order</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => setSortOrder('asc')}
+              className={`py-2 px-3 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 ${sortOrder === 'asc' ? 'bg-telegram-primary text-black font-bold shadow' : 'bg-telegram-hover/20 text-telegram-text hover:bg-telegram-hover/40 border border-telegram-border/20'}`}
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+              Ascending
+            </button>
+            <button
+              onClick={() => setSortOrder('desc')}
+              className={`py-2 px-3 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 ${sortOrder === 'desc' ? 'bg-telegram-primary text-black font-bold shadow' : 'bg-telegram-hover/20 text-telegram-text hover:bg-telegram-hover/40 border border-telegram-border/20'}`}
+            >
+              <ArrowDown className="w-3.5 h-3.5" />
+              Descending
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-xs font-bold text-telegram-primary uppercase tracking-wider">Filter File Type</label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { id: 'all', label: 'All Files' },
+              { id: 'pdf', label: 'PDFs' },
+              { id: 'image', label: 'Images' },
+              { id: 'video', label: 'Videos' },
+              { id: 'audio', label: 'Audio' },
+              { id: 'archive', label: 'Archives' },
+              { id: 'document', label: 'Documents' },
+            ].map(item => (
+              <button
+                key={item.id}
+                onClick={() => setFileTypeFilter(item.id as any)}
+                className={`py-2 px-2.5 rounded-xl text-xs font-semibold truncate transition cursor-pointer ${fileTypeFilter === item.id ? 'bg-telegram-primary text-black font-bold shadow' : 'bg-telegram-hover/20 text-telegram-text hover:bg-telegram-hover/40 border border-telegram-border/20'}`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="w-full py-3 rounded-2xl bg-telegram-primary text-black font-bold text-xs hover:bg-telegram-primary/90 shadow transition cursor-pointer"
+        >
+          Apply Filters
+        </button>
       </div>
     </div>
   );

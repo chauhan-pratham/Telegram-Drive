@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from 'react';
-import { DownloadCloud, Trash2, Pencil, X, Check, MoreVertical, Eye, Copy, Star, CheckCircle2, FolderOpen, Loader2 } from 'lucide-react';
+import { DownloadCloud, Trash2, Pencil, X, Check, MoreVertical, Eye, Copy, Star, CheckCircle2, FolderOpen, Loader2, FolderInput, Info } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MobileFileThumbnail } from './MobileFileThumbnail';
 import { ActionPopover, ActionItem } from './ActionPopover';
@@ -14,6 +14,8 @@ interface TouchFileListProps {
   onDelete: (file: TelegramFile) => void;
   onPreview: (file: TelegramFile) => void;
   onRename: (file: TelegramFile) => void;
+  onDetails?: (file: TelegramFile) => void;
+  onMoveToFolder?: (file: TelegramFile) => void;
   selectedIds: number[];
   onToggleSelection: (id: number) => void;
   onSelectAll: () => void;
@@ -31,7 +33,7 @@ interface TouchFileListProps {
 }
 
 export function TouchFileList({
-  files, isLoading, onDownload, onDelete, onPreview, onRename,
+  files, isLoading, onDownload, onDelete, onPreview, onRename, onDetails, onMoveToFolder,
   selectedIds, onToggleSelection, onSelectAll: _onSelectAll, onClearSelection: _onClearSelection,
   onBulkDelete: _onBulkDelete, onBulkDownload: _onBulkDownload, onBulkMove,
   onCopyTelegramLink, folders, activeFolderId, mutatingFolderIds: _mutatingFolderIds = [],
@@ -136,6 +138,24 @@ export function TouchFileList({
         icon: <Pencil className="w-4 h-4" />,
         onClick: () => onRename(file),
       },
+      {
+        label: 'Move to Folder',
+        icon: <FolderInput className="w-4 h-4 text-amber-400" />,
+        onClick: () => {
+          if (onMoveToFolder) {
+            onMoveToFolder(file);
+          } else {
+            setShowMovePicker(true);
+          }
+        },
+      },
+      {
+        label: 'Details',
+        icon: <Info className="w-4 h-4 text-telegram-primary" />,
+        onClick: () => {
+          if (onDetails) onDetails(file);
+        },
+      },
     ];
     // Telegram native t.me link (only for public folders)
     if (file.type !== 'folder' && onCopyTelegramLink) {
@@ -156,7 +176,7 @@ export function TouchFileList({
       destructive: true,
     });
     return actions;
-  }, [onPreview, onDownload, onRename, onDelete, onCopyTelegramLink, folders, activeFolderId, isStarred, starFile, unstarFile, isOffline, makeAvailableOffline, removeOfflineAccess]);
+  }, [onPreview, onDownload, onRename, onDetails, onMoveToFolder, onDelete, onCopyTelegramLink, folders, activeFolderId, isStarred, starFile, unstarFile, isOffline, makeAvailableOffline, removeOfflineAccess]);
 
   return (
     <>

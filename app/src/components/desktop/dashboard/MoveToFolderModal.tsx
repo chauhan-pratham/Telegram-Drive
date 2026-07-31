@@ -124,7 +124,7 @@ export function MoveToFolderModal({
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-telegram-surface border border-telegram-border rounded-xl w-96 shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
+            <div role="dialog" aria-modal="true" className="bg-telegram-surface border border-telegram-border rounded-xl w-96 shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-150" onClick={e => e.stopPropagation()}>
                 
                 {/* Header */}
                 <div className="p-4 border-b border-telegram-border flex justify-between items-center">

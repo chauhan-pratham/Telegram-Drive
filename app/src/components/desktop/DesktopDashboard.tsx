@@ -139,11 +139,8 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
     const { data: allFiles = [] as TelegramFile[], isLoading, error, refetch, isFetching } = useQuery<TelegramFile[]>({
         queryKey: ['files', activeFolderId],
         queryFn: async () => {
-            if (activeFolderId === null) {
-                return [];
-            }
             let accumulatedFiles: TelegramFile[] = [];
-            const actualFolderId = activeFolderId === -999 ? null : activeFolderId;
+            const actualFolderId = (activeFolderId === null || activeFolderId === -999) ? null : activeFolderId;
 
             const unlisten = await listen<any>('folder-load-chunk', (event) => {
                 const payload = event.payload;
@@ -167,7 +164,7 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 unlisten();
             }
         },
-        enabled: !!store && activeFolderId !== null,
+        enabled: !!store,
     });
 
     const filteredFilesByTab = useMemo(() => {
@@ -201,6 +198,9 @@ export function Dashboard({ onLogout }: { onLogout: () => void }) {
                 if (currentTab === 'shared') {
                     const sharedFolderIds = new Set(folders.filter(f => f.is_shared_with_me).map(f => f.id));
                     list = allFiles.filter(file => sharedFolderIds.has(file.folder_id ?? activeFolderId ?? NaN) && !trashedIds.has(file.id));
+                } else if (activeFolderId === null && (!fileTypeFilter || fileTypeFilter === 'all')) {
+                    // At My Drive root, files belong inside 'Saved Messages' (-999) or subfolders
+                    list = [];
                 } else {
                     list = allFiles.filter(f => !trashedIds.has(f.id));
                 }
