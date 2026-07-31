@@ -24,17 +24,15 @@ echo.
 
 :: 2. Automatically stage and commit any uncommitted changes for this release
 git add -A
-git commit -m "Release v%VER%" 2>nul
+git commit -m "Release v%VER%"
 
 :: 3. Push latest commits to remote repository
 git push origin main
 
 :: 4. Automatically recreate local and remote tag for current version
 if not "%VER%"=="" (
-    git tag -d "v=" 2>nul
-    git push origin :refs/tags/"v=" 2>nul
-    git tag -d "v%VER%" 2>nul
-    git push origin :refs/tags/"v%VER%" 2>nul
+    git tag -d "v%VER%" 2>NUL
+    git push origin :refs/tags/"v%VER%" 2>NUL
     git tag "v%VER%"
     git push origin "v%VER%"
 )
